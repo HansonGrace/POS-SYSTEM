@@ -1,0 +1,135 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  CASHIER
+}
+
+enum OrderStatus {
+  COMPLETED
+  VOIDED
+}
+
+enum PaymentType {
+  CASH
+  CARD
+}
+
+model User {
+  id           Int        @id @default(autoincrement())
+  username     String     @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime   @default(now())
+  active       Boolean    @default(true)
+  failedLogins Int        @default(0)
+  lockedUntil  DateTime?
+  lastFailedLoginAt DateTime?
+  orders       Order[]    @relation("CashierOrders")
+  auditLogs    AuditLog[] @relation("ActorAuditLogs")
+}
+
+model Product {
+  id             Int         @id @default(autoincrement())
+  name           String
+  sku            String      @unique
+  barcode        String?     @unique
+  category       String
+  priceCents     Int
+  inventoryCount Int         @default(0)
+  active         Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+  orderItems     OrderItem[]
+
+  @@index([category])
+  @@index([active])
+}
+
+model Customer {
+  id             Int             @id @default(autoincrement())
+  name           String
+  email          String?         @unique
+  phone          String?
+  createdAt      DateTime        @default(now())
+  orders         Order[]
+  paymentMethods PaymentMethod[]
+}
+
+model PaymentMethod {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  brand      String
+  last4      String
+  expMonth   Int
+  expYear    Int
+  token      String   @unique
+  createdAt  DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+model Order {
+  id            Int         @id @default(autoincrement())
+  cashierId     Int
+  customerId    Int?
+  subtotalCents Int
+  taxCents      Int
+  totalCents    Int
+  status        OrderStatus @default(COMPLETED)
+  paymentType   PaymentType
+  createdAt     DateTime    @default(now())
+
+  cashier  User        @relation("CashierOrders", fields: [cashierId], references: [id])
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  items    OrderItem[]
+
+  @@index([cashierId])
+  @@index([customerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id             Int @id @default(autoincrement())
+  orderId        Int
+  productId      Int
+  quantity       Int
+  unitPriceCents Int
+  lineTotalCents Int
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  actorId   Int?
+  action    String
+  metadata  Json?
+  requestId String?
+  ip        String?
+  userAgent String?
+  severity  String   @default("info")
+  category  String   @default("app")
+  createdAt DateTime @default(now())
+
+  actor User? @relation("ActorAuditLogs", fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([severity])
+  @@index([category])
+}

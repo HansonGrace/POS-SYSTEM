@@ -1,0 +1,37 @@
+{
+  "name": "pos-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "build": "prisma generate",
+    "build:postgres": "prisma generate --schema prisma/schema.postgres.prisma",
+    "test": "node --test",
+    "db:migrate": "node prisma/run-migrations.js",
+    "db:seed": "node prisma/seed.js",
+    "db:reset": "node prisma/reset-db.js",
+    "db:migrate:postgres": "prisma migrate deploy --schema prisma/schema.postgres.prisma",
+    "db:reset:postgres": "prisma migrate reset --force --skip-seed --schema prisma/schema.postgres.prisma && npm run db:seed",
+    "admin:create": "node scripts/create-admin.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.1",
+    "bcryptjs": "^2.4.3",
+    "connect-sqlite3": "^0.9.16",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "express-session": "^1.18.1",
+    "pino": "^9.6.0",
+    "prisma": "^6.4.1",
+    "sqlite3": "^5.1.7",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9",
+    "supertest": "^7.0.0"
+  }
+}
