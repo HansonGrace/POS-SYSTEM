@@ -3,6 +3,44 @@ import { useNavigate } from "react-router-dom";
 import { api, formatCents } from "../api";
 import type { Customer, Order, PaginatedResponse, Product } from "../types";
 
+const PRODUCT_IMAGE_BY_SKU: Record<string, string> = {
+  "GRC-1001": "wholemilk.png",
+  "GRC-1002": "browneggs.png",
+  "GRC-1003": "whitebread.png",
+  "GRC-1004": "peanutbutter.png",
+  "GRC-1005": "jasminerice.png",
+  "GRC-1006": "oliveoil.png",
+  "BEV-2001": "colacan.png",
+  "BEV-2002": "orangejuice.png",
+  "BEV-2003": "sparklinglimewater.png",
+  "BEV-2004": "icedcoffeebottle.png",
+  "BEV-2005": "greentea.png",
+  "BEV-2006": "energydrink.png",
+  "SNK-3001": "seasaltchips.png",
+  "SNK-3002": "trailmix.png",
+  "SNK-3003": "chocolatebar.png",
+  "SNK-3004": "proteinbar.png",
+  "SNK-3005": "pretzelsticks.png",
+  "SNK-3006": "popcornbutter.png",
+  "HSE-4001": "papertowels (2).png",
+  "HSE-4002": "dishsoap.png",
+  "HSE-4003": "laundrydetergentpng.png",
+  "HSE-4004": "trashbags.png",
+  "HSE-4005": "allpurposecleaner.png",
+  "HSE-4006": "toiletpaper.png",
+  "PRD-5001": "banana.png",
+  "PRD-5002": "galaapples.png",
+  "PRD-5003": "tomatoes.png",
+  "PRD-5004": "avacado.png",
+  "PRD-5005": "bellpeppers.png",
+  "PRD-5006": "carrots.png"
+};
+
+function getProductImageSrc(product: Product): string | null {
+  const fileName = PRODUCT_IMAGE_BY_SKU[product.sku];
+  return fileName ? encodeURI(`/images/${fileName}`) : null;
+}
+
 type CartLine = {
   product: Product;
   quantity: number;
@@ -348,24 +386,38 @@ export default function CashierPosPage() {
         ) : null}
 
         <div className="product-grid">
-          {products.map((product) => (
-            <article key={product.id} className="product-card">
-              <h3>{product.name}</h3>
-              <p>{product.category}</p>
-              <p>SKU: {product.sku}</p>
-              <p>In stock: {product.inventoryCount}</p>
-              <div className="product-card-footer">
-                <strong>{formatCents(product.priceCents)}</strong>
-                <button
-                  type="button"
-                  onClick={() => addToCart(product)}
-                  disabled={product.inventoryCount === 0}
-                >
-                  Add
-                </button>
-              </div>
-            </article>
-          ))}
+          {products.map((product) => {
+            const imageSrc = getProductImageSrc(product);
+
+            return (
+              <article key={product.id} className="product-card">
+                <div className="product-card-media">
+                  {imageSrc ? (
+                    <img src={imageSrc} alt={product.name} loading="lazy" decoding="async" />
+                  ) : (
+                    <div
+                      className="product-card-image-fallback"
+                      aria-label={`${product.name} image unavailable`}
+                    />
+                  )}
+                </div>
+                <h3>{product.name}</h3>
+                <p>{product.category}</p>
+                <p>SKU: {product.sku}</p>
+                <p>In stock: {product.inventoryCount}</p>
+                <div className="product-card-footer">
+                  <strong>{formatCents(product.priceCents)}</strong>
+                  <button
+                    type="button"
+                    onClick={() => addToCart(product)}
+                    disabled={product.inventoryCount === 0}
+                  >
+                    Add
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
 

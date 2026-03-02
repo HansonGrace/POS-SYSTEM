@@ -37,7 +37,7 @@ const products = [
   { name: "Apples Gala 1lb", category: "Produce", sku: "PRD-5002", barcode: "5005002", priceCents: 199, inventoryCount: 115 },
   { name: "Tomatoes 1lb", category: "Produce", sku: "PRD-5003", barcode: "5005003", priceCents: 249, inventoryCount: 100 },
   { name: "Avocado Each", category: "Produce", sku: "PRD-5004", barcode: "5005004", priceCents: 179, inventoryCount: 98 },
-  { name: "Spinach Bag", category: "Produce", sku: "PRD-5005", barcode: "5005005", priceCents: 299, inventoryCount: 84 },
+  { name: "Bell Peppers", category: "Produce", sku: "PRD-5005", barcode: "5005005", priceCents: 299, inventoryCount: 84 },
   { name: "Carrots 2lb", category: "Produce", sku: "PRD-5006", barcode: "5005006", priceCents: 269, inventoryCount: 76 }
 ];
 
