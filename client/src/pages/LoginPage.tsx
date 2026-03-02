@@ -41,9 +41,6 @@ export default function LoginPage() {
     <div className="login-page">
       <form className="panel login-card" onSubmit={onSubmit}>
         <h1>Point of Sale Login</h1>
-        <p className="muted">
-          Lab seed credentials are optional and only created when SEED_LAB_USERS=true.
-        </p>
         {sessionMessage ? <div className="panel">{sessionMessage}</div> : null}
 
         {error ? <div className="error-box">{error}</div> : null}

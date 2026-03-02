@@ -1,47 +1,28 @@
-# POS System Frontend (Mock UI)
+# WIP Open Source POS System
 
-Frontend-only POS simulation app using Vite + React + TypeScript.
+Work in progress. This repository is being cleaned up for open-source release.
 
-## Setup
+## Current Technical Scope
+
+- Monorepo with separate web client and API server
+- `client/`: React + Vite + TypeScript single-page app
+- `server/`: Node.js + Express REST API
+- Data layer: Prisma ORM with SQLite default, optional PostgreSQL path
+- Auth/session model: cookie-based sessions with role-aware route protection
+- Ops/security primitives in progress: request context, audit logging, and configurable hardening controls
+
+## Local Development (Current)
 
 ```bash
 npm install
+npm run db:reset
 npm run dev
 ```
 
-## Routes
+Default local endpoints:
+- Client: `http://localhost:5173`
+- API: `http://localhost:4000`
 
-- `/` -> redirects to `/login`
-- `/login` -> cashier/employee login
-- `/userinterface` -> protected blank user page (user session required)
-- `/admin/login` -> admin login
-- `/pos` -> redirects to `/userinterface`
-- `/admin` -> protected admin panel page (admin session required)
+## Status
 
-## Admin Credentials
-
-- Username: `admin`
-- Password: `admin`
-
-## Regular User Credentials
-
-- `user1 / user1`
-- `user2 / user2`
-- ...
-- `user10 / user10`
-
-## Notes
-
-- This is frontend-only.
-- Authentication is mock auth stored in `localStorage` under `pos_session`.
-- There is no backend, database, or API integration yet.
-
-## Secure Node Auth Module
-
-This repo also includes a backend-ready security module in `auth/` using Argon2id + pepper + lockout + migration.
-
-```bash
-npm run test:auth
-```
-
-See `auth/README.md` for API, config, schema, and security rationale.
+Documentation and public hardening are in progress. Interfaces, scripts, and config defaults may change.

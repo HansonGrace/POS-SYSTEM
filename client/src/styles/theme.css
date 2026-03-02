@@ -1,0 +1,10 @@
+:root {
+  --background: #ffffff;
+  --surface: #f8f9fa;
+  --border: #d1d5db;
+  --text: #1f2937;
+  --text-muted: #6b7280;
+  --accent: #5f7186;
+  --danger: #b45353;
+  --success: #4b7a58;
+}

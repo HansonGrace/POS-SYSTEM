@@ -1,5 +1,6 @@
 # Node artifacts
 node_modules/
+**/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -8,7 +9,10 @@ pnpm-debug.log*
 # Environment files
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
+!**/.env.example
 !.env.lab.example
 !.env.production.example
 !server/.env.example
@@ -18,6 +22,11 @@ pnpm-debug.log*
 
 # Databases / sqlite
 *.db
+*.db-*
+*.sqlite*
+**/*.db
+**/*.db-*
+**/*.sqlite*
 *.sqlite
 *.sqlite3
 dev.db
@@ -31,21 +40,67 @@ server/prisma/*.db-wal
 
 # Session stores
 sessions/
+**/sessions/
+sessions*.db
+**/sessions*.db
 server/sessions/
 *.session
 
 # Logs
 logs/
+**/logs/
 *.log
+**/*.log
+
+# Build and coverage artifacts
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+uploads/
+**/uploads/
+
+# Backups and dumps
+backups/
+**/backups/
+*.bak
+*.dump
+*.sql
+*.tar*
+**/*.bak
+**/*.dump
+**/*.sql
+**/*.tar*
+
+# TLS and key material
+*.pem
+*.key
+*.pfx
+*.crt
+*.cer
+**/*.pem
+**/*.key
+**/*.pfx
+**/*.crt
+**/*.cer
+
+# Sensitive directories
+deploy/secrets/
+docs/internal/
+private/
+
+# Network capture and request artifacts
+*.pcap
+*.pcapng
+*.har
+**/*.pcap
+**/*.pcapng
+**/*.har
 
 # OS/editor files
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
-
-# Build output
-dist/
-build/
-server/dist/
-client/dist/
