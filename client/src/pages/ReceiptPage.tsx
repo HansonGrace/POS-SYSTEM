@@ -120,6 +120,10 @@ export default function ReceiptPage() {
       </div>
 
       <div className="button-row">
+        <button type="button" onClick={() => window.print()}>
+          Print Receipt
+        </button>
+
         <Link to="/pos">
           <button type="button">Back to POS</button>
         </Link>
