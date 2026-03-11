@@ -53,6 +53,7 @@ const envSchema = z.object({
   WEAK_PASSWORDS_ALLOWED: booleanFromEnv.default(false),
   PASSWORD_MIN_LENGTH: numberFromEnv(z.number().int().min(1)).default(10),
   PAYMENT_TOKEN_MODE: z.enum(["strong", "weak"]).default("strong"),
+  ALLOW_WEAK_PAYMENT_TOKENS: booleanFromEnv.default(false),
   EXPOSE_PAYMENT_TOKENS: booleanFromEnv.default(false),
   SIEM_MODE: z.enum(["off", "syslog", "http"]).default("off"),
   SYSLOG_HOST: z.string().trim().optional(),
@@ -92,6 +93,23 @@ if (!parsed.LAB_MODE && parsed.LAB_PROFILE !== "secure") {
 
 const effectiveProfile = parsed.LAB_MODE ? parsed.LAB_PROFILE : "secure";
 const overrides = parsed.LAB_MODE ? profileOverrides[effectiveProfile] : {};
+const effectivePaymentTokenMode = overrides.paymentTokenMode ?? parsed.PAYMENT_TOKEN_MODE;
+
+if (effectivePaymentTokenMode === "weak" && !parsed.LAB_MODE) {
+  throw new Error("PAYMENT_TOKEN_MODE=weak is only allowed when LAB_MODE=true.");
+}
+
+if (effectivePaymentTokenMode === "weak" && !parsed.ALLOW_WEAK_PAYMENT_TOKENS) {
+  throw new Error(
+    "PAYMENT_TOKEN_MODE=weak requires ALLOW_WEAK_PAYMENT_TOKENS=true. This is disabled by default."
+  );
+}
+
+if (effectivePaymentTokenMode === "weak" && parsed.LAB_PROFILE === "secure") {
+  throw new Error(
+    "PAYMENT_TOKEN_MODE=weak is only allowed for intentional lab scenarios. Set LAB_PROFILE to scenario_credential_stuffing or scenario_data_exposure."
+  );
+}
 
 const sessionSecret =
   parsed.SESSION_SECRET || (parsed.LAB_MODE ? "lab-insecure-session-secret" : undefined);
@@ -133,6 +151,10 @@ if (exposePaymentTokens) {
   warnings.push("EXPOSE_PAYMENT_TOKENS is enabled. Sensitive token data may be returned.");
 }
 
+if (parsed.ALLOW_WEAK_PAYMENT_TOKENS) {
+  warnings.push("ALLOW_WEAK_PAYMENT_TOKENS is enabled. Weak payment token mode may be used in this environment.");
+}
+
 if (parsed.SIEM_MODE === "syslog" && !parsed.SYSLOG_HOST) {
   warnings.push("SIEM_MODE=syslog but SYSLOG_HOST is not configured. SIEM forwarding will be skipped.");
 }
@@ -159,7 +181,8 @@ export const config = {
   lockoutEnabled: overrides.lockoutEnabled ?? parsed.LOCKOUT_ENABLED,
   weakPasswordsAllowed: overrides.weakPasswordsAllowed ?? parsed.WEAK_PASSWORDS_ALLOWED,
   passwordMinLength: parsed.PASSWORD_MIN_LENGTH,
-  paymentTokenMode: overrides.paymentTokenMode ?? parsed.PAYMENT_TOKEN_MODE,
+  paymentTokenMode: effectivePaymentTokenMode,
+  allowWeakPaymentTokens: parsed.ALLOW_WEAK_PAYMENT_TOKENS,
   exposePaymentTokens,
   siemMode: parsed.SIEM_MODE,
   syslogHost: parsed.SYSLOG_HOST,
@@ -188,6 +211,12 @@ export function printStartupBanner() {
   console.log(`ENV=${config.nodeEnv} LAB_MODE=${config.labMode} LAB_PROFILE=${config.labProfile}`);
   // eslint-disable-next-line no-console
   console.log(`RATE_LIMIT=${config.rateLimitEnabled} LOCKOUT=${config.lockoutEnabled} CSRF=${config.csrfEnabled}`);
+  // eslint-disable-next-line no-console
+  if (config.paymentTokenMode === "weak") {
+    console.log(
+      "SECURITY WARNING: PAYMENT_TOKEN_MODE=weak is active. This is intentionally insecure and for controlled lab simulation only."
+    );
+  }
   // eslint-disable-next-line no-console
   console.log("=".repeat(72));
 }

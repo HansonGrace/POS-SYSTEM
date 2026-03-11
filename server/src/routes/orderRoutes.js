@@ -8,7 +8,10 @@ import { permissions } from "../auth/permissions.js";
 import { computeTax } from "../utils/money.js";
 import { parsePageQuery, createPageResult } from "../utils/pagination.js";
 import { emitSecurityEvent } from "../security/events.js";
-import { generatePaymentToken } from "../security/paymentTokens.js";
+import {
+  assertWeakPaymentTokenModeEnabled,
+  generatePaymentToken
+} from "../security/paymentTokens.js";
 
 const router = Router();
 
@@ -141,6 +144,7 @@ router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) =
           throw new Error("Customer and card fields are required when saving card on file.");
         }
 
+        assertWeakPaymentTokenModeEnabled();
         await tx.paymentMethod.create({
           data: {
             customerId,

@@ -6,7 +6,10 @@ import { permissions } from "../auth/permissions.js";
 import { parsePageQuery, createPageResult } from "../utils/pagination.js";
 import { redactCustomer, redactPaymentMethod } from "../security/redaction.js";
 import { emitSecurityEvent } from "../security/events.js";
-import { generatePaymentToken } from "../security/paymentTokens.js";
+import {
+  assertWeakPaymentTokenModeEnabled,
+  generatePaymentToken
+} from "../security/paymentTokens.js";
 import { config } from "../config.js";
 
 const router = Router();
@@ -257,6 +260,8 @@ router.post("/:id/payment-methods", requirePermission(permissions.PAYMENT_METHOD
   if (!parsed.success) {
     return res.status(400).json({ message: "Invalid payment method payload." });
   }
+
+  assertWeakPaymentTokenModeEnabled();
 
   const token =
     parsed.data.token ||
