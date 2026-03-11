@@ -1,8 +1,10 @@
 import bcrypt from "bcryptjs";
 import { PrismaClient, Role } from "@prisma/client";
+import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import dotenv from "dotenv";
 import path from "node:path";
+import { config } from "../src/config.js";
 
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
@@ -48,20 +50,57 @@ const customers = [
   { name: "Mia Rivera", email: "mia.rivera@example.com", phone: "555-0104" }
 ];
 
+function randomLabPassword() {
+  // Controlled lab-only credential flow. Do not enable this outside dedicated non-production training environments.
+  return randomBytes(12).toString("base64url");
+}
+
 async function seedUsers(prisma) {
   if (String(process.env.SEED_LAB_USERS || "false").toLowerCase() !== "true") {
     console.log("SEED_LAB_USERS is not true. Skipping seeded lab credentials.");
     return;
   }
 
+  if (!config.labAllowDefaultCredentials) {
+    console.log(
+      "SEED_LAB_USERS is true but LAB_ALLOW_DEFAULT_CREDENTIALS is not set. " +
+        "Skipping default credential creation for safety."
+    );
+    return;
+  }
+
+  // This is a cyber-lab simulation control path. Keep disabled unless explicitly approved in lab config.
+  const useRandomPasswords = config.labSeedRandomPasswords;
   const allUsers = [
-    { username: "admin", password: "admin", role: Role.ADMIN },
+    { username: "admin", role: Role.ADMIN, password: useRandomPasswords ? randomLabPassword() : "admin" },
     ...Array.from({ length: 10 }, (_, index) => {
       const n = index + 1;
-      const credential = `user${n}`;
-      return { username: credential, password: credential, role: Role.CASHIER };
+      const username = `user${n}`;
+      return {
+        username,
+        role: Role.CASHIER,
+        password: useRandomPasswords ? randomLabPassword() : username
+      };
     })
   ];
+
+  if (useRandomPasswords) {
+    console.log("LAB_SEED_RANDOM_PASSWORDS enabled: generated one-time lab credentials:");
+    for (const user of allUsers) {
+      console.log(` - ${user.username}: ${user.password}`);
+      generatedCredentials.push(`${user.username}=${user.password}`);
+    }
+  } else {
+    console.log(
+      "LAB_ALLOW_DEFAULT_CREDENTIALS is true and LAB_SEED_RANDOM_PASSWORDS is false. " +
+        "Using deterministic credentials (admin/admin and user1/user1 ...)."
+    );
+  }
+
+  if (!config.labMode) {
+    console.log("LAB_MODE is false. No lab users were seeded.");
+    return;
+  }
 
   for (const user of allUsers) {
     const passwordHash = await bcrypt.hash(user.password, SALT_ROUNDS);

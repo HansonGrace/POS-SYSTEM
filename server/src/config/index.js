@@ -38,6 +38,8 @@ const envSchema = z.object({
   LAB_PROFILE: z
     .enum(["secure", "scenario_credential_stuffing", "scenario_data_exposure"])
     .default("secure"),
+  LAB_ALLOW_DEFAULT_CREDENTIALS: booleanFromEnv.default(false),
+  LAB_SEED_RANDOM_PASSWORDS: booleanFromEnv.default(false),
   SESSION_SECRET: z.string().trim().min(1).optional(),
   SESSION_NAME: z.string().trim().min(1).default("pos_sid"),
   TRUST_PROXY: booleanFromEnv.default(false),
@@ -102,6 +104,19 @@ if (!parsed.SESSION_SECRET && parsed.LAB_MODE) {
   warnings.push("SESSION_SECRET not set. Using lab fallback secret.");
 }
 
+if (parsed.LAB_ALLOW_DEFAULT_CREDENTIALS && !parsed.LAB_MODE) {
+  throw new Error("LAB_ALLOW_DEFAULT_CREDENTIALS requires LAB_MODE=true.");
+}
+
+if (parsed.LAB_ALLOW_DEFAULT_CREDENTIALS) {
+  warnings.push("LAB_ALLOW_DEFAULT_CREDENTIALS is enabled. Weak lab accounts may be created by seed script.");
+}
+if (parsed.LAB_SEED_RANDOM_PASSWORDS && !parsed.LAB_ALLOW_DEFAULT_CREDENTIALS) {
+  warnings.push(
+    "LAB_SEED_RANDOM_PASSWORDS is set but LAB_ALLOW_DEFAULT_CREDENTIALS is false. No lab users will be seeded."
+  );
+}
+
 const corsOrigins = parsed.CORS_ORIGINS.split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -129,6 +144,8 @@ export const config = {
   nodeEnv: parsed.NODE_ENV,
   labMode: parsed.LAB_MODE,
   labProfile: effectiveProfile,
+  labAllowDefaultCredentials: parsed.LAB_ALLOW_DEFAULT_CREDENTIALS,
+  labSeedRandomPasswords: parsed.LAB_SEED_RANDOM_PASSWORDS,
   sessionSecret,
   sessionName: parsed.SESSION_NAME,
   trustProxy: parsed.TRUST_PROXY,
