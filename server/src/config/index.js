@@ -41,6 +41,7 @@ const envSchema = z.object({
   LAB_ALLOW_DEFAULT_CREDENTIALS: booleanFromEnv.default(false),
   LAB_SEED_RANDOM_PASSWORDS: booleanFromEnv.default(false),
   SESSION_SECRET: z.string().trim().min(1).optional(),
+  ALLOW_DEFAULT_SESSION_SECRET: booleanFromEnv.default(false),
   SESSION_NAME: z.string().trim().min(1).default("pos_sid"),
   TRUST_PROXY: booleanFromEnv.default(false),
   API_HOST: z.string().trim().min(1).default("0.0.0.0"),
@@ -84,6 +85,23 @@ const profileOverrides = {
   }
 };
 
+function isInsecureSessionSecret(secret) {
+  if (!secret) {
+    return true;
+  }
+
+  const normalized = secret.toLowerCase().trim();
+  const insecurePatterns = [
+    "lab-insecure-session-secret",
+    "lab_demo_change_me",
+    "replace_with",
+    "changeme",
+    "your_secret"
+  ];
+
+  return normalized.length < 24 || insecurePatterns.some((pattern) => normalized.includes(pattern));
+}
+
 const parsed = envSchema.parse(process.env);
 const warnings = [];
 
@@ -111,15 +129,24 @@ if (effectivePaymentTokenMode === "weak" && parsed.LAB_PROFILE === "secure") {
   );
 }
 
-const sessionSecret =
-  parsed.SESSION_SECRET || (parsed.LAB_MODE ? "lab-insecure-session-secret" : undefined);
-
-if (!sessionSecret) {
-  throw new Error("SESSION_SECRET is required unless LAB_MODE=true.");
+if (parsed.ALLOW_DEFAULT_SESSION_SECRET && !parsed.LAB_MODE) {
+  throw new Error("ALLOW_DEFAULT_SESSION_SECRET=true requires LAB_MODE=true.");
 }
 
-if (!parsed.SESSION_SECRET && parsed.LAB_MODE) {
-  warnings.push("SESSION_SECRET not set. Using lab fallback secret.");
+if (!parsed.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET is required. Set a strong, unique secret before startup.");
+}
+
+if (isInsecureSessionSecret(parsed.SESSION_SECRET) && !parsed.ALLOW_DEFAULT_SESSION_SECRET) {
+  throw new Error(
+    "SESSION_SECRET appears to be a known default or too short. Provide a strong unique value per deployment."
+  );
+}
+
+if (parsed.ALLOW_DEFAULT_SESSION_SECRET) {
+  warnings.push(
+    "ALLOW_DEFAULT_SESSION_SECRET is enabled (LAB_MODE=true). Using weak/insecure session secret intentionally for emergency lab workflows."
+  );
 }
 
 if (parsed.LAB_ALLOW_DEFAULT_CREDENTIALS && !parsed.LAB_MODE) {
@@ -168,7 +195,8 @@ export const config = {
   labProfile: effectiveProfile,
   labAllowDefaultCredentials: parsed.LAB_ALLOW_DEFAULT_CREDENTIALS,
   labSeedRandomPasswords: parsed.LAB_SEED_RANDOM_PASSWORDS,
-  sessionSecret,
+  sessionSecret: parsed.SESSION_SECRET,
+  allowDefaultSessionSecret: parsed.ALLOW_DEFAULT_SESSION_SECRET,
   sessionName: parsed.SESSION_NAME,
   trustProxy: parsed.TRUST_PROXY,
   host: parsed.API_HOST,
@@ -216,6 +244,12 @@ export function printStartupBanner() {
     console.log(
       "SECURITY WARNING: PAYMENT_TOKEN_MODE=weak is active. This is intentionally insecure and for controlled lab simulation only."
     );
+  }
+  // eslint-disable-next-line no-console
+  if (config.allowDefaultSessionSecret) {
+    console.log("SESSION_SECRET NOTE: default/weak secret is explicitly allowed (LAB_MODE only).");
+  } else {
+    console.log("SESSION_SECRET NOTE: custom secure session secret is configured.");
   }
   // eslint-disable-next-line no-console
   console.log("=".repeat(72));
