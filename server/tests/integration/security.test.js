@@ -189,5 +189,33 @@ test("Rate limiting and lockout behavior works when enabled", async () => {
   const third = await login(lockoutAgent, "cashier", "wrong-pass");
   assert.equal(first.status, 401);
   assert.equal(second.status, 401);
-  assert.equal(third.status, 423);
+  assert.equal(third.status, 401);
+
+  const cashier = await prisma.user.findUnique({ where: { username: "cashier" } });
+  assert.ok(cashier?.lockedUntil);
+  assert.ok(cashier.lockedUntil > new Date());
+  assert.equal(cashier.failedLogins, 3);
+});
+
+test("Unknown user and locked user login failures are indistinguishable", async () => {
+  const unknownAgent = request.agent(app);
+  const unknownRes = await login(unknownAgent, "ghost-user", "WrongPass123!");
+  assert.equal(unknownRes.status, 401);
+
+  const lockedPassword = await bcrypt.hash("LockedPass123!", 10);
+  await prisma.user.create({
+    data: {
+      username: "locked-user",
+      passwordHash: lockedPassword,
+      role: Role.CASHIER,
+      active: true,
+      failedLogins: 3,
+      lockedUntil: new Date(Date.now() + 15 * 60 * 1000)
+    }
+  });
+
+  const lockedAgent = request.agent(app);
+  const lockedRes = await login(lockedAgent, "locked-user", "WrongPass123!");
+  assert.equal(lockedRes.status, 401);
+  assert.equal(lockedRes.body.message, unknownRes.body.message);
 });

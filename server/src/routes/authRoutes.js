@@ -16,6 +16,10 @@ const loginSchema = z.object({
   rememberMe: z.boolean().optional().default(false)
 });
 
+const LOGIN_FAILURE_MESSAGE = "Invalid username or password.";
+const LOGIN_FAILURE_DELAY_MS = 120;
+const DUMMY_PASSWORD_HASH = "$2a$10$0YOPrg403kJHVOX7tBafzucc4Mu6jbb.XOGbjbq58O8yO9yk7j6gu";
+
 function buildLoginLimiter() {
   if (!config.rateLimitEnabled) {
     return (_req, _res, next) => next();
@@ -59,6 +63,26 @@ function regenerateSession(req) {
   });
 }
 
+async function emitLoginFailure(startTime, req, user, reason, extra = {}) {
+  const elapsedMs = Date.now() - startTime;
+  const delayMs = Math.max(0, LOGIN_FAILURE_DELAY_MS - elapsedMs);
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  if (user) {
+    await emitSecurityEvent(
+      "auth_login_failed",
+      { username: user, reason, ...extra },
+      req
+    );
+  } else {
+    await emitSecurityEvent("auth_login_failed", { reason, ...extra }, req);
+  }
+
+  return LOGIN_FAILURE_MESSAGE;
+}
+
 router.get("/csrf", csrfTokenHandler);
 
 router.post("/login", loginLimiter, async (req, res) => {
@@ -70,20 +94,25 @@ router.post("/login", loginLimiter, async (req, res) => {
   const username = parsed.data.username.toLowerCase();
   const { password, rememberMe } = parsed.data;
   const now = new Date();
+  const requestStart = Date.now();
 
   const user = await prisma.user.findUnique({ where: { username } });
   if (!user || !user.active) {
-    await emitSecurityEvent("auth_login_failed", { username, reason: "invalid_user" }, req);
-    return res.status(401).json({ message: "Invalid username or password." });
+    await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+    const message = await emitLoginFailure(requestStart, req, username, "invalid_user");
+    return res.status(401).json({ message });
   }
 
   if (config.lockoutEnabled && user.lockedUntil && user.lockedUntil > now) {
-    await emitSecurityEvent(
-      "auth_login_failed",
-      { username: user.username, reason: "account_locked", lockedUntil: user.lockedUntil },
-      req
+    await bcrypt.compare(password, user.passwordHash);
+    const message = await emitLoginFailure(
+      requestStart,
+      req,
+      user.username,
+      "account_locked",
+      { lockedUntil: user.lockedUntil }
     );
-    return res.status(423).json({ message: "Account locked due to failed login attempts." });
+    return res.status(401).json({ message });
   }
 
   const validPassword = await bcrypt.compare(password, user.passwordHash);
@@ -115,17 +144,11 @@ router.post("/login", loginLimiter, async (req, res) => {
       data: updateData
     });
 
-    await emitSecurityEvent(
-      "auth_login_failed",
-      { username: user.username, reason: "bad_password", failedLogins: nextFailed },
-      req
-    );
+    const message = await emitLoginFailure(requestStart, req, user.username, "bad_password", {
+      failedLogins: nextFailed
+    });
 
-    if (config.lockoutEnabled && nextFailed >= config.lockoutThreshold) {
-      return res.status(423).json({ message: "Account locked due to failed login attempts." });
-    }
-
-    return res.status(401).json({ message: "Invalid username or password." });
+    return res.status(401).json({ message });
   }
 
   try {
