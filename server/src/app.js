@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import session from "express-session";
 import connectSqlite3 from "connect-sqlite3";
+import helmet from "helmet";
 import path from "node:path";
 import fs from "node:fs";
 import { config } from "./config.js";
@@ -25,6 +26,33 @@ export function createApp() {
   fs.mkdirSync(sessionsDir, { recursive: true });
 
   app.set("trust proxy", config.trustProxy ? 1 : 0);
+  app.disable("x-powered-by");
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: false,
+        directives: {
+          "default-src": ["'none'"],
+          "base-uri": ["'none'"],
+          "frame-ancestors": ["'none'"],
+          "form-action": ["'self'"],
+          "connect-src": ["'self'"],
+          "object-src": ["'none'"]
+        }
+      },
+      frameguard: { action: "deny" },
+      noSniff: true,
+      referrerPolicy: { policy: "same-origin" },
+      crossOriginResourcePolicy: true,
+      xssFilter: true,
+      hsts: config.cookieSecure || config.trustProxy
+        ? {
+            maxAge: 15552000,
+            includeSubDomains: true
+          }
+        : false
+    })
+  );
   app.use(assignRequestContext);
   app.use(requestLogger);
 

@@ -32,7 +32,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const response = await api.get<{ user: AuthUser }>("/api/auth/me");
+      const response = await api.get<{ user: AuthUser }>("/api/auth/me", {
+        suppressSessionExpiredRedirect: true
+      });
       setUser(response.user);
     } catch {
       setUser(null);

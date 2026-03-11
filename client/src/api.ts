@@ -6,6 +6,7 @@ type RequestMethod = "GET" | "POST" | "PUT" | "DELETE";
 type RequestOptions = {
   method?: RequestMethod;
   body?: unknown;
+  suppressSessionExpiredRedirect?: boolean;
 };
 
 class ApiError extends Error {
@@ -105,7 +106,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json") ? await response.json() : null;
 
-  if (response.status === 401 && !path.startsWith("/api/auth/login")) {
+  if (
+    response.status === 401 &&
+    !path.startsWith("/api/auth/login") &&
+    !options.suppressSessionExpiredRedirect
+  ) {
     redirectToLogin();
   }
 
@@ -118,10 +123,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) => request<T>(path, { method: "POST", body }),
-  put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body }),
-  delete: <T>(path: string) => request<T>(path, { method: "DELETE" })
+  get: <T>(path: string, options?: Omit<RequestOptions, "body" | "method">) =>
+    request<T>(path, options),
+  post: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, "body" | "method">) =>
+    request<T>(path, { method: "POST", body, ...options }),
+  put: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, "body" | "method">) =>
+    request<T>(path, { method: "PUT", body, ...options }),
+  delete: <T>(path: string, options?: Omit<RequestOptions, "body" | "method">) =>
+    request<T>(path, { method: "DELETE", ...options })
 };
 
 export function formatCents(cents: number): string {

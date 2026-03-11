@@ -39,6 +39,13 @@ export default function LoginPage() {
 
   return (
     <div className="login-page">
+      <div className="login-logo-layer" aria-hidden="true">
+        <img
+          src="/images/TORCH.png"
+          alt=""
+          className="login-background-logo"
+        />
+      </div>
       <form className="panel login-card" onSubmit={onSubmit}>
         <h1>Point of Sale Login</h1>
         {sessionMessage ? <div className="panel">{sessionMessage}</div> : null}

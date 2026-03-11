@@ -48,6 +48,25 @@ let prisma;
 let app;
 let Role;
 
+function assertSecurityHeaders(response) {
+  const { headers } = response;
+
+  assert.equal(headers["x-frame-options"], "DENY");
+  assert.equal(headers["x-content-type-options"], "nosniff");
+  assert.equal(headers["referrer-policy"], "same-origin");
+  assert.equal(headers["cross-origin-resource-policy"] !== undefined, true);
+  assert.ok(headers["content-security-policy"]);
+  assert.ok(headers["content-security-policy"].includes("default-src 'none'"));
+  assert.ok(headers["content-security-policy"].includes("base-uri 'none'"));
+  assert.ok(headers["content-security-policy"].includes("frame-ancestors 'none'"));
+  assert.ok(headers["content-security-policy"].includes("form-action 'self'"));
+  assert.ok(headers["content-security-policy"].includes("connect-src 'self'"));
+  assert.ok(headers["content-security-policy"].includes("object-src 'none'"));
+  assert.equal(headers["x-dns-prefetch-control"], "off");
+  assert.equal(headers["x-powered-by"], undefined);
+  assert.equal(headers["strict-transport-security"], undefined);
+}
+
 async function getCsrfToken(agent) {
   const csrfRes = await agent.get("/api/auth/csrf");
   assert.equal(csrfRes.status, 200);
@@ -218,4 +237,16 @@ test("Unknown user and locked user login failures are indistinguishable", async 
   const lockedRes = await login(lockedAgent, "locked-user", "WrongPass123!");
   assert.equal(lockedRes.status, 401);
   assert.equal(lockedRes.body.message, unknownRes.body.message);
+});
+
+test("Security response headers are present on health endpoint", async () => {
+  const res = await request(app).get("/api/health");
+  assert.equal(res.status, 200);
+  assertSecurityHeaders(res);
+});
+
+test("Security response headers are present on auth endpoint", async () => {
+  const res = await request(app).get("/api/auth/csrf");
+  assert.equal(res.status, 200);
+  assertSecurityHeaders(res);
 });
