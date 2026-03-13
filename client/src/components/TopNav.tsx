@@ -1,7 +1,12 @@
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
-export default function TopNav({ title }: { title: string }) {
+type TopNavProps = {
+  title: string;
+  showSlogan?: boolean;
+};
+
+export default function TopNav({ title, showSlogan = false }: TopNavProps) {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
 
@@ -13,8 +18,13 @@ export default function TopNav({ title }: { title: string }) {
   return (
     <header className="top-nav">
       <div className="top-nav-left">
-        <strong>RangePOS</strong>
-        <span className="top-nav-title">{title}</span>
+        {showSlogan ? (
+          <img
+            src="/images/TORCH_slogan_yellow.png"
+            alt={`${title} logo`}
+            className="top-nav-slogan-logo"
+          />
+        ) : null}
       </div>
       <div className="top-nav-right">
         <span>{user?.username}</span>

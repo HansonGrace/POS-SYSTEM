@@ -74,7 +74,7 @@ function redirectToLogin() {
   window.location.assign(url.toString());
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+async function request<T>(path: string, options: RequestOptions = {}, retried = false): Promise<T> {
   const method = options.method || "GET";
   const isStateChanging = !SAFE_METHODS.has(method);
 
@@ -112,6 +112,18 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     !options.suppressSessionExpiredRedirect
   ) {
     redirectToLogin();
+  }
+
+  if (
+    !retried &&
+    isStateChanging &&
+    response.status === 403 &&
+    payload?.message &&
+    String(payload.message).toLowerCase() === "invalid csrf token."
+  ) {
+    clearApiSessionState();
+    await ensureCsrfToken();
+    return request(path, options, true);
   }
 
   if (!response.ok) {

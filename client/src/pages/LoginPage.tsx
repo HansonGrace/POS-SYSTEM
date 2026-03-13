@@ -8,7 +8,6 @@ export default function LoginPage() {
   const { user, login, loading } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const sessionMessage =
@@ -28,7 +27,7 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      const loggedInUser = await login({ username, password, rememberMe });
+      const loggedInUser = await login({ username, password, rememberMe: false });
       navigate(loggedInUser.role === "ADMIN" ? "/admin" : "/pos", { replace: true });
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Login failed.");
@@ -75,16 +74,7 @@ export default function LoginPage() {
           required
         />
 
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={rememberMe}
-            onChange={(event) => setRememberMe(event.target.checked)}
-          />
-          Remember me for 7 days
-        </label>
-
-        <button type="submit" disabled={submitting}>
+        <button type="submit" disabled={submitting} className="login-submit">
           {submitting ? "Signing in..." : "Sign in"}
         </button>
       </form>

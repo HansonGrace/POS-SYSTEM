@@ -49,6 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (input: LoginInput) => {
     const response = await api.post<{ user: AuthUser }>("/api/auth/login", input);
+    clearApiSessionState();
     setUser(response.user);
     return response.user;
   }, []);

@@ -109,6 +109,7 @@ select {
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
+  position: relative;
 }
 
 .top-nav-left,
@@ -116,6 +117,13 @@ select {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.top-nav-slogan-logo {
+  width: auto !important;
+  height: 52px !important;
+  max-width: 420px !important;
+  object-fit: contain;
 }
 
 .top-nav-title {
@@ -166,6 +174,10 @@ select {
   border-radius: 6px;
   padding: 10px;
   margin-bottom: 10px;
+}
+
+.login-submit {
+  margin-top: 6px;
 }
 
 .checkbox-row {
