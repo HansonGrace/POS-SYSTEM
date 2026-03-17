@@ -9,6 +9,7 @@ import { config } from "../src/config.js";
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 const SALT_ROUNDS = 10;
+const generatedCredentials = [];
 
 const products = [
   { name: "Whole Milk 1L", category: "Grocery", sku: "GRC-1001", barcode: "1001001", priceCents: 329, inventoryCount: 80 },
@@ -43,6 +44,10 @@ const products = [
   { name: "Carrots 2lb", category: "Produce", sku: "PRD-5006", barcode: "5005006", priceCents: 269, inventoryCount: 76 }
 ];
 
+const registers = [
+  { identifier: "MAIN", name: "Front Register" }
+];
+
 const customers = [
   { name: "Ava Collins", email: "ava.collins@example.com", phone: "555-0101" },
   { name: "Liam Bennett", email: "liam.bennett@example.com", phone: "555-0102" },
@@ -69,7 +74,6 @@ async function seedUsers(prisma) {
     return;
   }
 
-  // This is a cyber-lab simulation control path. Keep disabled unless explicitly approved in lab config.
   const useRandomPasswords = config.labSeedRandomPasswords;
   const allUsers = [
     { username: "admin", role: Role.ADMIN, password: useRandomPasswords ? randomLabPassword() : "admin" },
@@ -145,6 +149,23 @@ async function seedCustomers(prisma) {
   }
 }
 
+async function seedRegisters(prisma) {
+  for (const register of registers) {
+    await prisma.register.upsert({
+      where: { identifier: register.identifier },
+      update: {
+        name: register.name,
+        active: true
+      },
+      create: {
+        ...register,
+        name: register.name,
+        active: true
+      }
+    });
+  }
+}
+
 export async function seedDatabase() {
   const prisma = new PrismaClient();
 
@@ -152,7 +173,8 @@ export async function seedDatabase() {
     await seedUsers(prisma);
     await seedProducts(prisma);
     await seedCustomers(prisma);
-    console.log("Seed completed: products and customers. Lab users are opt-in via SEED_LAB_USERS=true.");
+    await seedRegisters(prisma);
+    console.log("Seed completed: products, customers, and registers. Lab users are opt-in via SEED_LAB_USERS=true.");
   } finally {
     await prisma.$disconnect();
   }

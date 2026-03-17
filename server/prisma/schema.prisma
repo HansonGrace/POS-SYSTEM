@@ -22,31 +22,107 @@ enum PaymentType {
   CARD
 }
 
+enum TransactionStatus {
+  DRAFT
+  FINALIZED
+  VOIDED
+  PARTIALLY_REFUNDED
+  FULLY_REFUNDED
+}
+
+enum TransactionPaymentStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  REFUNDED
+  VOIDED
+}
+
+enum TenderType {
+  CASH
+  CARD
+  DIGITAL_WALLET
+  GIFT_CARD
+  OTHER
+}
+
+enum DiscountType {
+  AMOUNT
+  PERCENT
+}
+
+enum DiscountTarget {
+  TRANSACTION
+  ITEM
+}
+
+enum PaymentStatus {
+  PENDING
+  CAPTURED
+  FAILED
+  VOIDED
+}
+
+enum ReturnStatus {
+  OPEN
+  COMPLETED
+  VOIDED
+}
+
+enum RefundStatus {
+  PENDING
+  COMPLETED
+  VOIDED
+}
+
+enum RegisterSessionStatus {
+  OPEN
+  CLOSED
+  RECONCILED
+}
+
+enum TransactionTaxType {
+  SALES
+}
+
+enum ReceiptStatus {
+  ISSUED
+  VOIDED
+}
+
 model User {
-  id           Int        @id @default(autoincrement())
-  username     String     @unique
-  passwordHash String
-  role         Role
-  createdAt    DateTime   @default(now())
-  active       Boolean    @default(true)
-  failedLogins Int        @default(0)
-  lockedUntil  DateTime?
-  lastFailedLoginAt DateTime?
-  orders       Order[]    @relation("CashierOrders")
-  auditLogs    AuditLog[] @relation("ActorAuditLogs")
+  id                 Int      @id @default(autoincrement())
+  username           String   @unique
+  passwordHash       String
+  role               Role
+  createdAt          DateTime @default(now())
+  active             Boolean  @default(true)
+  failedLogins       Int      @default(0)
+  lockedUntil        DateTime?
+  lastFailedLoginAt  DateTime?
+  orders             Order[]    @relation("CashierOrders")
+  transactions       Transaction[] @relation("CashierTransactions")
+  registerSessions   RegisterSession[] @relation("CashierRegisterSessions")
+  auditLogs          AuditLog[] @relation("ActorAuditLogs")
+  payments           TransactionPayment[] @relation("PaymentsRecordedByCashier")
+  returns            Return[] @relation("ReturnsRecordedByCashier")
+  refunds            Refund[] @relation("RefundsRecordedByCashier")
+  statusHistory      TransactionStatusHistory[] @relation("TransactionStatusHistoryByActor")
+  receipts           Receipt[] @relation("ReceiptsIssuedByCashier")
 }
 
 model Product {
-  id             Int         @id @default(autoincrement())
-  name           String
-  sku            String      @unique
-  barcode        String?     @unique
-  category       String
-  priceCents     Int
-  inventoryCount Int         @default(0)
-  active         Boolean     @default(true)
-  createdAt      DateTime    @default(now())
-  orderItems     OrderItem[]
+  id              Int       @id @default(autoincrement())
+  name            String
+  sku             String    @unique
+  barcode         String?   @unique
+  category        String
+  priceCents      Int
+  inventoryCount   Int       @default(0)
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  orderItems      OrderItem[]
+  transactionItems TransactionItem[]
 
   @@index([category])
   @@index([active])
@@ -59,6 +135,7 @@ model Customer {
   phone          String?
   createdAt      DateTime        @default(now())
   orders         Order[]
+  transactions   Transaction[]
   paymentMethods PaymentMethod[]
 }
 
@@ -111,6 +188,256 @@ model OrderItem {
 
   @@index([orderId])
   @@index([productId])
+}
+
+model Register {
+  id         Int      @id @default(autoincrement())
+  identifier String   @unique
+  name       String
+  location   String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  sessions RegisterSession[]
+
+  @@index([active])
+}
+
+model RegisterSession {
+  id                   Int       @id @default(autoincrement())
+  registerId           Int
+  cashierId            Int
+  status               RegisterSessionStatus @default(OPEN)
+  openedAt             DateTime  @default(now())
+  closedAt             DateTime?
+  startingBalanceCents  Int       @default(0)
+  endingBalanceCents    Int?
+  notes                String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  register       Register @relation(fields: [registerId], references: [id])
+  cashier        User     @relation("CashierRegisterSessions", fields: [cashierId], references: [id])
+  transactions   Transaction[]
+
+  @@index([registerId])
+  @@index([cashierId])
+  @@index([status])
+  @@index([openedAt])
+}
+
+model Transaction {
+  id                    Int                    @id @default(autoincrement())
+  transactionNumber    String                @unique
+  cashierId             Int
+  customerId            Int?
+  registerSessionId     Int
+  status               TransactionStatus      @default(DRAFT)
+  paymentStatus        TransactionPaymentStatus @default(PENDING)
+  subtotalCents        Int                    @default(0)
+  discountTotalCents   Int                    @default(0)
+  taxTotalCents        Int                    @default(0)
+  totalCents           Int                    @default(0)
+  currency             String                 @default("USD")
+  notes                String?
+  voidReason           String?
+  voidedAt             DateTime?
+  finalizedAt          DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  cashier         User            @relation("CashierTransactions", fields: [cashierId], references: [id])
+  customer        Customer?       @relation(fields: [customerId], references: [id])
+  registerSession RegisterSession  @relation(fields: [registerSessionId], references: [id])
+  items           TransactionItem[]
+  discounts       TransactionDiscount[]
+  taxes           TransactionTax[]
+  payments        TransactionPayment[]
+  returns         Return[]
+  refunds         Refund[]
+  statusHistory   TransactionStatusHistory[]
+  receipt         Receipt?
+
+  @@index([cashierId])
+  @@index([customerId])
+  @@index([registerSessionId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([createdAt])
+  @@index([finalizedAt])
+}
+
+model TransactionItem {
+  id                     Int      @id @default(autoincrement())
+  transactionId          Int
+  productId              Int?
+  lineNumber             Int
+  productNameSnapshot    String
+  productSkuSnapshot     String
+  productBarcodeSnapshot String?
+  productCategorySnapshot String?
+  quantity               Int
+  unitPriceCents         Int
+  discountAmountCents    Int      @default(0)
+  taxAmountCents         Int      @default(0)
+  lineSubtotalCents      Int
+  lineTotalCents         Int
+  isVoided               Boolean  @default(false)
+  isReturned             Boolean  @default(false)
+  refundedQuantity       Int      @default(0)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  transaction Transaction      @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  product     Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
+  discounts   TransactionDiscount[]
+  taxes       TransactionTax[]
+  refunds     Refund[]
+
+  @@index([transactionId])
+  @@index([productId])
+  @@unique([transactionId, lineNumber])
+}
+
+model TransactionDiscount {
+  id                Int           @id @default(autoincrement())
+  transactionId     Int
+  transactionItemId Int?
+  name              String
+  discountType      DiscountType
+  target            DiscountTarget
+  rateBasisPoints   Int?
+  amountCents       Int
+  notes             String?
+  createdAt         DateTime      @default(now())
+
+  transaction      Transaction      @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  transactionItem  TransactionItem? @relation(fields: [transactionItemId], references: [id], onDelete: SetNull)
+
+  @@index([transactionId])
+  @@index([transactionItemId])
+}
+
+model TransactionTax {
+  id                 Int               @id @default(autoincrement())
+  transactionId      Int
+  transactionItemId  Int?
+  name               String
+  taxType            TransactionTaxType
+  rateBasisPoints    Int
+  taxableAmountCents Int
+  amountCents        Int
+  createdAt          DateTime          @default(now())
+
+  transaction      Transaction       @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  transactionItem  TransactionItem?  @relation(fields: [transactionItemId], references: [id], onDelete: SetNull)
+
+  @@index([transactionId])
+  @@index([transactionItemId])
+}
+
+model TransactionPayment {
+  id            Int      @id @default(autoincrement())
+  transactionId Int
+  cashierId     Int
+  tenderType    TenderType
+  status        PaymentStatus @default(PENDING)
+  amountCents   Int
+  reference     String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  cashier     User        @relation("PaymentsRecordedByCashier", fields: [cashierId], references: [id])
+
+  @@index([transactionId])
+  @@index([cashierId])
+  @@index([status])
+}
+
+model Return {
+  id                    Int      @id @default(autoincrement())
+  originalTransactionId Int
+  cashierId             Int
+  status                ReturnStatus @default(OPEN)
+  reason                String?
+  processedAt           DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  originalTransaction Transaction @relation(fields: [originalTransactionId], references: [id], onDelete: Restrict)
+  cashier            User           @relation("ReturnsRecordedByCashier", fields: [cashierId], references: [id])
+  refunds            Refund[]
+
+  @@index([originalTransactionId])
+  @@index([cashierId])
+  @@index([status])
+}
+
+model Refund {
+  id                Int       @id @default(autoincrement())
+  transactionId     Int
+  transactionItemId Int?
+  returnId          Int?
+  cashierId         Int
+  status            RefundStatus @default(PENDING)
+  amountCents       Int
+  reason            String?
+  issuedAt          DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  metadata          Json?
+
+  transaction    Transaction      @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  transactionItem TransactionItem? @relation(fields: [transactionItemId], references: [id], onDelete: SetNull)
+  returnRecord   Return?          @relation(fields: [returnId], references: [id], onDelete: SetNull)
+  cashier        User             @relation("RefundsRecordedByCashier", fields: [cashierId], references: [id])
+
+  @@index([transactionId])
+  @@index([transactionItemId])
+  @@index([returnId])
+  @@index([cashierId])
+  @@index([status])
+}
+
+model Receipt {
+  id            Int        @id @default(autoincrement())
+  transactionId Int        @unique
+  cashierId     Int
+  receiptNumber String     @unique
+  status        ReceiptStatus @default(ISSUED)
+  issuedAt      DateTime   @default(now())
+  payload       Json?
+  metadata      Json?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  cashier     User       @relation("ReceiptsIssuedByCashier", fields: [cashierId], references: [id])
+
+  @@index([receiptNumber])
+  @@index([status])
+  @@index([issuedAt])
+}
+
+model TransactionStatusHistory {
+  id            Int            @id @default(autoincrement())
+  transactionId Int
+  status        TransactionStatus
+  changedById   Int
+  reason        String?
+  metadata      Json?
+  createdAt     DateTime       @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  changedBy   User        @relation("TransactionStatusHistoryByActor", fields: [changedById], references: [id])
+
+  @@index([transactionId])
+  @@index([changedById])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model AuditLog {
