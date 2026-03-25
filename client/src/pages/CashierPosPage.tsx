@@ -1,7 +1,14 @@
-import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, formatCents } from "../api";
-import type { Customer, Order, PaginatedResponse, Product } from "../types";
+import type {
+  Customer,
+  Order,
+  PaginatedResponse,
+  Product,
+  RegisterSession,
+  SuspendedSale
+} from "../types";
 
 const PRODUCT_IMAGE_BY_SKU: Record<string, string> = {
   "GRC-1001": "wholemilk.png",
@@ -61,6 +68,15 @@ export default function CashierPosPage() {
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [error, setError] = useState("");
+  const [kioskMode, setKioskMode] = useState(true);
+  const [registerSession, setRegisterSession] = useState<RegisterSession | null>(null);
+  const [registerIdInput, setRegisterIdInput] = useState("1");
+  const [openingFloatInput, setOpeningFloatInput] = useState("0");
+  const [registerBusy, setRegisterBusy] = useState(false);
+  const [scanCode, setScanCode] = useState("");
+  const [scanBusy, setScanBusy] = useState(false);
+  const [suspendedSales, setSuspendedSales] = useState<SuspendedSale[]>([]);
+  const [resumedSaleId, setResumedSaleId] = useState<number | null>(null);
 
   const [paymentType, setPaymentType] = useState<"CASH" | "CARD">("CASH");
   const [customerId, setCustomerId] = useState<string>("");
@@ -122,23 +138,213 @@ export default function CashierPosPage() {
     }
   };
 
+  const loadCurrentRegisterSession = async () => {
+    try {
+      const response = await api.get<{ session: RegisterSession | null }>("/api/register-sessions/current");
+      setRegisterSession(response.session);
+      return response.session;
+    } catch {
+      setRegisterSession(null);
+      return null;
+    }
+  };
+
+  const loadSuspendedSales = async () => {
+    try {
+      const response = await api.get<{ items: SuspendedSale[] }>("/api/orders/suspended");
+      setSuspendedSales(response.items);
+    } catch {
+      setSuspendedSales([]);
+    }
+  };
+
+  const openRegisterSession = async () => {
+    const registerId = Number(registerIdInput);
+    if (!Number.isInteger(registerId) || registerId <= 0) {
+      setError("Register id must be a positive number.");
+      return;
+    }
+
+    setRegisterBusy(true);
+    setError("");
+    try {
+      const startingBalanceCents = Math.round(Number(openingFloatInput || 0) * 100);
+      const response = await api.post<{ session: RegisterSession }>("/api/register-sessions/open", {
+        registerId,
+        startingBalanceCents
+      });
+      setRegisterSession(response.session);
+      await loadSuspendedSales();
+    } catch (registerError) {
+      setError(registerError instanceof Error ? registerError.message : "Failed to open register session.");
+    } finally {
+      setRegisterBusy(false);
+    }
+  };
+
+  const closeRegisterSession = async () => {
+    if (!registerSession) {
+      setError("No open register session.");
+      return;
+    }
+
+    setRegisterBusy(true);
+    setError("");
+    try {
+      await api.post<{ session: RegisterSession }>(`/api/register-sessions/${registerSession.id}/close`, {});
+      setRegisterSession(null);
+      setSuspendedSales([]);
+    } catch (registerError) {
+      setError(registerError instanceof Error ? registerError.message : "Failed to close register session.");
+    } finally {
+      setRegisterBusy(false);
+    }
+  };
+
+  const recordNoSaleDrawerEvent = async () => {
+    if (!registerSession) {
+      setError("Open a register session before drawer events.");
+      return;
+    }
+
+    setRegisterBusy(true);
+    setError("");
+    try {
+      await api.post(`/api/register-sessions/${registerSession.id}/drawer-events`, {
+        type: "NO_SALE",
+        amountCents: 0,
+        reason: "cashier initiated drawer open"
+      });
+    } catch (drawerError) {
+      setError(drawerError instanceof Error ? drawerError.message : "Failed to record drawer event.");
+    } finally {
+      setRegisterBusy(false);
+    }
+  };
+
+  const simulateScan = async () => {
+    const code = scanCode.trim();
+    if (!code) {
+      return;
+    }
+
+    setScanBusy(true);
+    setError("");
+    try {
+      const response = await api.get<{ product: Product }>(`/api/products/scan/${encodeURIComponent(code)}`);
+      addToCart(response.product);
+      setScanCode("");
+    } catch (scanError) {
+      setError(scanError instanceof Error ? scanError.message : "Scanner simulation failed.");
+    } finally {
+      setScanBusy(false);
+    }
+  };
+
+  const suspendCurrentSale = async () => {
+    if (cartLines.length === 0) {
+      setError("Cart is empty.");
+      return;
+    }
+    if (!registerSession) {
+      setError("Open a register session before suspending a sale.");
+      return;
+    }
+
+    setCheckoutBusy(true);
+    setError("");
+    try {
+      await api.post<{ suspendedSale: SuspendedSale }>("/api/orders/suspended", {
+        registerSessionId: registerSession.id,
+        customerId: customerId ? Number(customerId) : null,
+        items: cartLines.map((line) => ({
+          productId: line.product.id,
+          quantity: line.quantity
+        }))
+      });
+      setCart({});
+      setResumedSaleId(null);
+      resetCheckoutFields();
+      await loadSuspendedSales();
+    } catch (suspendError) {
+      setError(suspendError instanceof Error ? suspendError.message : "Failed to suspend sale.");
+    } finally {
+      setCheckoutBusy(false);
+    }
+  };
+
+  const resumeSuspendedSale = async (saleId: number) => {
+    setCheckoutBusy(true);
+    setError("");
+    try {
+      const response = await api.post<{
+        suspendedSale: SuspendedSale;
+        resumeCart: Array<{ product: Product; quantity: number }>;
+      }>(`/api/orders/suspended/${saleId}/resume`, {});
+
+      const nextCart: Record<number, CartLine> = {};
+      for (const line of response.resumeCart) {
+        nextCart[line.product.id] = {
+          product: line.product,
+          quantity: line.quantity
+        };
+      }
+
+      setCart(nextCart);
+      setResumedSaleId(response.suspendedSale.id);
+      setCustomerId(response.suspendedSale.customerId ? String(response.suspendedSale.customerId) : "");
+      await loadProducts();
+      await loadSuspendedSales();
+    } catch (resumeError) {
+      setError(resumeError instanceof Error ? resumeError.message : "Failed to resume suspended sale.");
+    } finally {
+      setCheckoutBusy(false);
+    }
+  };
+
   useEffect(() => {
     const loadInitialData = async () => {
       try {
-        const configResponse = await api.get<{ taxRate: number }>("/api/config");
+        const configResponse = await api.get<{ taxRate: number; kioskMode?: boolean }>("/api/config");
         setTaxRate(configResponse.taxRate);
+        setKioskMode(configResponse.kioskMode !== false);
       } catch {
         // Keep defaults for resilient cashier flow.
+      }
+
+      const session = await loadCurrentRegisterSession();
+      if (session) {
+        await loadSuspendedSales();
       }
     };
 
     loadInitialData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     loadCustomers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerSearch]);
+
+  useEffect(() => {
+    if (!kioskMode) {
+      return undefined;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key === "F5" ||
+        (event.ctrlKey && ["r", "R"].includes(event.key)) ||
+        (event.altKey && event.key === "ArrowLeft")
+      ) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [kioskMode]);
 
   const categories = useMemo(() => {
     const values = new Set(products.map((product) => product.category));
@@ -262,6 +468,10 @@ export default function CashierPosPage() {
       setError("Cart is empty.");
       return;
     }
+    if (!registerSession) {
+      setError("Open a register session before checkout.");
+      return;
+    }
 
     if (paymentType === "CARD" && saveCardOnFile) {
       if (!customerId || !cardLast4 || !expMonth || !expYear) {
@@ -277,6 +487,8 @@ export default function CashierPosPage() {
       const payload: Record<string, unknown> = {
         paymentType,
         customerId: customerId ? Number(customerId) : null,
+        registerSessionId: registerSession.id,
+        suspendedSaleId: resumedSaleId,
         items: cartLines.map((line) => ({
           productId: line.product.id,
           quantity: line.quantity
@@ -295,8 +507,10 @@ export default function CashierPosPage() {
 
       const response = await api.post<{ order: Order }>("/api/orders", payload);
       setCart({});
+      setResumedSaleId(null);
       resetCheckoutFields();
       setCheckoutOpen(false);
+      await loadSuspendedSales();
       navigate(`/pos/receipt/${response.order.id}`);
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : "Checkout failed.");
@@ -305,7 +519,7 @@ export default function CashierPosPage() {
     }
   };
 
-  const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  const onSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter") {
       return;
     }
@@ -342,9 +556,22 @@ export default function CashierPosPage() {
     })();
   };
 
+  const onScanKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    void simulateScan();
+  };
+
   const openCheckout = () => {
     if (!cartLines.length) {
       setError("Cart is empty.");
+      return;
+    }
+    if (!registerSession) {
+      setError("Open a register session before checkout.");
       return;
     }
 
@@ -357,7 +584,60 @@ export default function CashierPosPage() {
       <section className="panel product-panel">
         <div className="panel-header-row register-header">
           <h2>Register</h2>
-          <span className="muted">Search / Scan</span>
+          <span className="muted">{registerSession ? `Session #${registerSession.id}` : "Session closed"}</span>
+        </div>
+        <div className="register-session-box">
+          <div>
+            <strong>{registerSession ? "Shift Active" : "Shift Closed"}</strong>
+            <p className="muted">
+              {registerSession
+                ? `${registerSession.register?.identifier || "REGISTER"} opened ${new Date(
+                    registerSession.openedAt
+                  ).toLocaleTimeString()}`
+                : "Open a register session before checkout."}
+            </p>
+          </div>
+          {!registerSession ? (
+            <div className="register-session-actions">
+              <input
+                aria-label="Register id"
+                value={registerIdInput}
+                onChange={(event) => setRegisterIdInput(event.target.value.replace(/\D/g, ""))}
+                placeholder="Register Id"
+              />
+              <input
+                aria-label="Opening float"
+                value={openingFloatInput}
+                onChange={(event) => setOpeningFloatInput(event.target.value.replace(/[^\d.]/g, ""))}
+                placeholder="Opening float (e.g. 100.00)"
+              />
+              <button type="button" onClick={openRegisterSession} disabled={registerBusy}>
+                {registerBusy ? "Opening..." : "Open Shift"}
+              </button>
+            </div>
+          ) : (
+            <div className="button-row">
+              <button type="button" onClick={recordNoSaleDrawerEvent} disabled={registerBusy}>
+                Drawer No-Sale
+              </button>
+              <button type="button" onClick={closeRegisterSession} disabled={registerBusy}>
+                {registerBusy ? "Closing..." : "Close Shift"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="toolbar-row register-toolbar">
+          <input
+            placeholder="Scanner code (barcode or SKU)"
+            value={scanCode}
+            onChange={(event) => setScanCode(event.target.value)}
+            onKeyDown={onScanKeyDown}
+            aria-label="Scanner simulation code"
+          />
+          <button type="button" onClick={simulateScan} disabled={scanBusy || !scanCode.trim()}>
+            {scanBusy ? "Scanning..." : "Simulate Scan"}
+          </button>
         </div>
 
         <div className="toolbar-row register-toolbar">
@@ -468,6 +748,31 @@ export default function CashierPosPage() {
           </div>
         ) : null}
 
+        {suspendedSales.length > 0 ? (
+          <div className="suspended-sales-box">
+            <div className="panel-header-row">
+              <h3>Suspended Sales</h3>
+              <span className="muted">{suspendedSales.length}</span>
+            </div>
+            <div className="suspended-sales-list">
+              {suspendedSales.map((sale) => (
+                <div key={sale.id} className="suspended-sale-row">
+                  <div>
+                    <strong>Hold #{sale.id}</strong>
+                    <p className="muted">{new Date(sale.suspendedAt).toLocaleTimeString()}</p>
+                  </div>
+                  <div>
+                    <strong>{formatCents(sale.totalCents)}</strong>
+                  </div>
+                  <button type="button" onClick={() => resumeSuspendedSale(sale.id)} disabled={checkoutBusy}>
+                    Resume
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div className="totals-box">
           <div>
             <span>Subtotal</span>
@@ -484,6 +789,14 @@ export default function CashierPosPage() {
         </div>
 
         <div className="checkout-block">
+          <button
+            type="button"
+            className="button-quiet"
+            onClick={suspendCurrentSale}
+            disabled={checkoutBusy || cartLines.length === 0 || !registerSession}
+          >
+            Suspend Sale
+          </button>
           <button
             type="button"
             className="checkout-trigger"
@@ -507,6 +820,9 @@ export default function CashierPosPage() {
             <div className="panel-header-row">
               <h3 id="checkout-title">Checkout</h3>
             </div>
+            {resumedSaleId ? (
+              <div className="empty-state">Resumed hold #{resumedSaleId}. Completing this sale will close it.</div>
+            ) : null}
 
             <label className="field-label" htmlFor="customer-id">
               Customer

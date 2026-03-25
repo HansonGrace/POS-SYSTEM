@@ -58,9 +58,13 @@ enum DiscountTarget {
 
 enum PaymentStatus {
   PENDING
+  AUTHORIZED
+  COMPLETED
   CAPTURED
   FAILED
   VOIDED
+  PARTIALLY_REFUNDED
+  REFUNDED
 }
 
 enum ReturnStatus {
@@ -90,6 +94,22 @@ enum ReceiptStatus {
   VOIDED
 }
 
+enum CashDrawerEventType {
+  OPEN_FLOAT
+  CASH_DROP
+  CASH_PICKUP
+  NO_SALE
+  ADJUSTMENT
+  COUNT
+}
+
+enum SuspendedSaleStatus {
+  ACTIVE
+  RESUMED
+  CHECKED_OUT
+  CANCELLED
+}
+
 model User {
   id                 Int      @id @default(autoincrement())
   username           String   @unique
@@ -109,6 +129,10 @@ model User {
   refunds            Refund[] @relation("RefundsRecordedByCashier")
   statusHistory      TransactionStatusHistory[] @relation("TransactionStatusHistoryByActor")
   receipts           Receipt[] @relation("ReceiptsIssuedByCashier")
+  paymentAttempts    PaymentAttempt[] @relation("PaymentAttemptsByActor")
+  paymentStatusHistory PaymentStatusHistory[] @relation("PaymentStatusHistoryByActor")
+  cashDrawerEvents   CashDrawerEvent[] @relation("CashDrawerEventsByCashier")
+  suspendedSales     SuspendedSale[] @relation("SuspendedSalesByCashier")
 }
 
 model Product {
@@ -137,6 +161,7 @@ model Customer {
   orders         Order[]
   transactions   Transaction[]
   paymentMethods PaymentMethod[]
+  suspendedSales SuspendedSale[]
 }
 
 model PaymentMethod {
@@ -220,11 +245,60 @@ model RegisterSession {
   register       Register @relation(fields: [registerId], references: [id])
   cashier        User     @relation("CashierRegisterSessions", fields: [cashierId], references: [id])
   transactions   Transaction[]
+  cashDrawerEvents CashDrawerEvent[]
+  suspendedSales SuspendedSale[]
 
   @@index([registerId])
   @@index([cashierId])
   @@index([status])
   @@index([openedAt])
+}
+
+model CashDrawerEvent {
+  id                Int                 @id @default(autoincrement())
+  registerSessionId Int
+  cashierId         Int
+  type              CashDrawerEventType
+  amountCents       Int                 @default(0)
+  reason            String?
+  metadata          Json?
+  createdAt         DateTime            @default(now())
+
+  registerSession RegisterSession @relation(fields: [registerSessionId], references: [id], onDelete: Cascade)
+  cashier         User            @relation("CashDrawerEventsByCashier", fields: [cashierId], references: [id])
+
+  @@index([registerSessionId])
+  @@index([cashierId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model SuspendedSale {
+  id                Int                 @id @default(autoincrement())
+  cashierId         Int
+  registerSessionId Int
+  customerId        Int?
+  status            SuspendedSaleStatus @default(ACTIVE)
+  payload           Json
+  subtotalCents     Int
+  taxCents          Int
+  totalCents        Int
+  note              String?
+  checkoutOrderId   Int?
+  suspendedAt       DateTime            @default(now())
+  resumedAt         DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  cashier         User            @relation("SuspendedSalesByCashier", fields: [cashierId], references: [id])
+  registerSession RegisterSession @relation(fields: [registerSessionId], references: [id], onDelete: Cascade)
+  customer        Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([cashierId])
+  @@index([registerSessionId])
+  @@index([customerId])
+  @@index([status])
+  @@index([suspendedAt])
 }
 
 model Transaction {
@@ -344,10 +418,17 @@ model TransactionPayment {
   tenderType    TenderType
   status        PaymentStatus @default(PENDING)
   amountCents   Int
+  provider      String    @default("internal")
+  providerReference String?
+  metadata      Json?
+  capturedAmountCents Int @default(0)
+  refundedAmountCents Int @default(0)
   reference     String?
   notes         String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  attempts      PaymentAttempt[]
+  statusHistory PaymentStatusHistory[]
 
   transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   cashier     User        @relation("PaymentsRecordedByCashier", fields: [cashierId], references: [id])
@@ -355,6 +436,48 @@ model TransactionPayment {
   @@index([transactionId])
   @@index([cashierId])
   @@index([status])
+}
+
+model PaymentAttempt {
+  id            Int      @id @default(autoincrement())
+  paymentId     Int
+  actorId       Int
+  status        PaymentStatus
+  amountCents   Int
+  provider      String
+  providerReference String?
+  reference     String?
+  errorCode     String?
+  errorMessage  String?
+  payload       Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  payment TransactionPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  actor   User              @relation("PaymentAttemptsByActor", fields: [actorId], references: [id])
+
+  @@index([paymentId])
+  @@index([actorId])
+  @@index([status])
+}
+
+model PaymentStatusHistory {
+  id             Int      @id @default(autoincrement())
+  paymentId      Int
+  previousStatus PaymentStatus?
+  nextStatus     PaymentStatus
+  actorId        Int
+  reason         String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  payment TransactionPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  actor   User              @relation("PaymentStatusHistoryByActor", fields: [actorId], references: [id])
+
+  @@index([paymentId])
+  @@index([actorId])
+  @@index([nextStatus])
+  @@index([createdAt])
 }
 
 model Return {

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { config } from "../config.js";
 import { emitSecurityEvent } from "./events.js";
+import { incrementMetric } from "../observability/metrics.js";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -33,6 +34,9 @@ export async function csrfProtection(req, res, next) {
   const providedToken = req.get("x-csrf-token");
 
   if (!expectedToken || !providedToken || expectedToken !== providedToken) {
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("api_error_count", { method: req.method, path: req.path, statusClass: "4xx" });
+    }
     await emitSecurityEvent(
       "suspicious_csrf_failure",
       { reason: "csrf_validation_failed", path: req.originalUrl || req.url },

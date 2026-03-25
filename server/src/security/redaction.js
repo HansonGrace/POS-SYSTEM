@@ -1,5 +1,8 @@
 import { config } from "../config.js";
 
+const SENSITIVE_KEY_PATTERN = /(password|secret|token|authorization|cookie|session|card|cvv|pin)/i;
+const REDACTED = "[REDACTED]";
+
 export function redactPaymentMethod(paymentMethod) {
   if (!paymentMethod) {
     return null;
@@ -17,6 +20,35 @@ export function redactPaymentMethod(paymentMethod) {
 
 export function canExposeTokens({ includeTokens }) {
   return config.labMode && config.exposePaymentTokens && includeTokens;
+}
+
+export function redactSensitiveFields(value, depth = 0) {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (depth > 4) {
+    return "[TRUNCATED]";
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveFields(item, depth + 1));
+  }
+
+  if (typeof value !== "object") {
+    return value;
+  }
+
+  const output = {};
+  for (const [key, nestedValue] of Object.entries(value)) {
+    if (SENSITIVE_KEY_PATTERN.test(key)) {
+      output[key] = REDACTED;
+      continue;
+    }
+    output[key] = redactSensitiveFields(nestedValue, depth + 1);
+  }
+
+  return output;
 }
 
 export function redactCustomer(customer, options = {}) {

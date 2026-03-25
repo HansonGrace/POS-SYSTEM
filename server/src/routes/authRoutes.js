@@ -7,6 +7,8 @@ import { config } from "../config.js";
 import { requireAuth } from "../middleware/auth.js";
 import { emitSecurityEvent } from "../security/events.js";
 import { csrfTokenHandler } from "../security/csrf.js";
+import { incrementMetric } from "../observability/metrics.js";
+import { logger } from "../logging/logger.js";
 
 const router = Router();
 
@@ -86,8 +88,16 @@ async function emitLoginFailure(startTime, req, user, reason, extra = {}) {
 router.get("/csrf", csrfTokenHandler);
 
 router.post("/login", loginLimiter, async (req, res) => {
+  if (config.observabilityMetricsEnabled) {
+    incrementMetric("login_attempts_total", { route: "/api/auth/login" });
+  }
+
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("login_failures_total", { reason: "invalid_payload" });
+    }
+    logger.warn({ eventType: "auth_login_validation_failed", requestId: req.requestId });
     return res.status(400).json({ message: "Invalid login payload." });
   }
 
@@ -96,15 +106,23 @@ router.post("/login", loginLimiter, async (req, res) => {
   const now = new Date();
   const requestStart = Date.now();
 
+  await emitSecurityEvent("auth_login_attempt", { username }, req);
+
   const user = await prisma.user.findUnique({ where: { username } });
   if (!user || !user.active) {
     await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("login_failures_total", { reason: "invalid_user" });
+    }
     const message = await emitLoginFailure(requestStart, req, username, "invalid_user");
     return res.status(401).json({ message });
   }
 
   if (config.lockoutEnabled && user.lockedUntil && user.lockedUntil > now) {
     await bcrypt.compare(password, user.passwordHash);
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("login_failures_total", { reason: "account_locked" });
+    }
     const message = await emitLoginFailure(
       requestStart,
       req,
@@ -117,6 +135,10 @@ router.post("/login", loginLimiter, async (req, res) => {
 
   const validPassword = await bcrypt.compare(password, user.passwordHash);
   if (!validPassword) {
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("login_failures_total", { reason: "bad_password" });
+    }
+
     const nextFailed = user.failedLogins + 1;
     const updateData = {
       failedLogins: { increment: 1 },
@@ -175,6 +197,9 @@ router.post("/login", loginLimiter, async (req, res) => {
   });
 
   await emitSecurityEvent("auth_login_success", { userId: user.id, rememberMe }, req);
+  if (config.observabilityMetricsEnabled) {
+    incrementMetric("login_success_total", { role: user.role });
+  }
 
   return res.json({
     user: {
@@ -194,6 +219,9 @@ router.post("/logout", requireAuth, async (req, res) => {
     }
 
     await emitSecurityEvent("auth_logout", { userId: actorId }, req);
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("logout_total", { role: req.user.role });
+    }
 
     res.clearCookie(config.sessionName);
     return res.json({ message: "Logged out." });

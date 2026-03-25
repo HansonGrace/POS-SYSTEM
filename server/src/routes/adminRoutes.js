@@ -4,6 +4,8 @@ import { prisma } from "../db.js";
 import { requirePermission } from "../middleware/auth.js";
 import { permissions } from "../auth/permissions.js";
 import { parsePageQuery, createPageResult } from "../utils/pagination.js";
+import { getMetricSnapshot, resetMetrics } from "../observability/metrics.js";
+import { config } from "../config.js";
 
 const router = Router();
 
@@ -113,8 +115,61 @@ router.get("/metrics", requirePermission(permissions.METRICS_READ), async (_req,
       security: {
         failedLogins24h,
         lockouts24h
-      }
+      },
+      runtime: config.observabilityMetricsEnabled
+        ? getMetricSnapshot()
+        : {
+            generatedAt: new Date().toISOString(),
+            counters: [],
+            timings: []
+          }
     }
+  });
+});
+
+router.get("/observability", requirePermission(permissions.METRICS_READ), async (_req, res) => {
+  return res.json({
+    observability: {
+      metricsEnabled: config.observabilityMetricsEnabled,
+      auditEnabled: config.observabilityAuditEnabled,
+      runtime: getMetricSnapshot()
+    }
+  });
+});
+
+router.post("/observability/reset-metrics", requirePermission(permissions.METRICS_READ), async (_req, res) => {
+  resetMetrics();
+  return res.json({
+    message: "Runtime metrics reset.",
+    at: new Date().toISOString()
+  });
+});
+
+router.get("/backup-manifest", requirePermission(permissions.METRICS_READ), async (_req, res) => {
+  return res.json({
+    backup: {
+      environmentLabel: config.backupEnvLabel,
+      backupDir: config.backupDir,
+      restoreRequireConfirm: config.restoreRequireConfirm
+    }
+  });
+});
+
+router.get("/audit-summary", requirePermission(permissions.AUDIT_READ), async (_req, res) => {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const grouped = await prisma.auditLog.groupBy({
+    by: ["category", "severity"],
+    where: { createdAt: { gte: since } },
+    _count: { _all: true }
+  });
+
+  return res.json({
+    since: since.toISOString(),
+    summary: grouped.map((row) => ({
+      category: row.category,
+      severity: row.severity,
+      count: row._count._all
+    }))
   });
 });
 

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const baseConfigUrl = new URL("../src/config/index.js", import.meta.url).href;
+const baseConfigUrl = new URL("../../src/config/index.js", import.meta.url).href;
 
 async function withEnvironment(overrides, fn) {
   const keys = Object.keys(overrides);
@@ -85,6 +85,40 @@ test("startup allows placeholder secret only when explicit lab override is enabl
       assert.equal(config.allowDefaultSessionSecret, true);
       assert.equal(config.sessionSecret, "lab-insecure-session-secret");
       assert.equal(config.labMode, true);
+    }
+  );
+});
+
+test("config applies local defaults for app env label and backup env label", async () => {
+  await withEnvironment(
+    {
+      SESSION_SECRET: "this-is-a-valid-session-secret-value-12345",
+      LAB_MODE: "false",
+      APP_ENV_LABEL: undefined,
+      BACKUP_ENV_LABEL: undefined
+    },
+    async () => {
+      const { config } = await loadConfig();
+      assert.equal(config.appEnvLabel, "local");
+      assert.equal(config.backupEnvLabel, "local");
+    }
+  );
+});
+
+test("config parses observability and restore flags", async () => {
+  await withEnvironment(
+    {
+      SESSION_SECRET: "this-is-a-valid-session-secret-value-12345",
+      LAB_MODE: "false",
+      OBSERVABILITY_ENABLED: "false",
+      OBSERVABILITY_METRICS_ENABLED: "false",
+      RESTORE_REQUIRE_CONFIRM: "false"
+    },
+    async () => {
+      const { config } = await loadConfig();
+      assert.equal(config.observabilityEnabled, false);
+      assert.equal(config.observabilityMetricsEnabled, false);
+      assert.equal(config.restoreRequireConfirm, false);
     }
   );
 });

@@ -84,7 +84,8 @@ async function request<T>(path: string, options: RequestOptions = {}, retried = 
 
   const requestId = createRequestId();
   const headers: Record<string, string> = {
-    "X-Request-Id": requestId
+    "X-Request-Id": requestId,
+    "X-Correlation-Id": requestId
   };
 
   if (options.body !== undefined) {

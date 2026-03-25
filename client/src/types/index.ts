@@ -79,6 +79,49 @@ export type Order = {
   items: OrderItem[];
 };
 
+export type RegisterSession = {
+  id: number;
+  registerId: number;
+  cashierId: number;
+  status: "OPEN" | "CLOSED" | "RECONCILED";
+  openedAt: string;
+  closedAt: string | null;
+  startingBalanceCents: number;
+  endingBalanceCents: number | null;
+  notes: string | null;
+  register?: {
+    id: number;
+    identifier: string;
+    name: string;
+  };
+};
+
+export type SuspendedSale = {
+  id: number;
+  cashierId: number;
+  registerSessionId: number;
+  customerId: number | null;
+  status: "ACTIVE" | "RESUMED" | "CHECKED_OUT" | "CANCELLED";
+  payload: {
+    items: Array<{ productId: number; quantity: number }>;
+  };
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  note: string | null;
+  suspendedAt: string;
+  resumedAt: string | null;
+};
+
+export type PrintJob = {
+  id: string;
+  orderId: number;
+  actorId: number;
+  requestId: string | null;
+  output: string;
+  createdAt: string;
+};
+
 export type Metrics = {
   totalSalesTodayCents: number;
   totalSales7DaysCents: number;

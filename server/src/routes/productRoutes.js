@@ -5,6 +5,8 @@ import { requirePermission } from "../middleware/auth.js";
 import { permissions } from "../auth/permissions.js";
 import { parsePageQuery, createPageResult } from "../utils/pagination.js";
 import { emitSecurityEvent } from "../security/events.js";
+import { incrementMetric } from "../observability/metrics.js";
+import { config } from "../config.js";
 
 const router = Router();
 
@@ -55,6 +57,33 @@ router.get("/", requirePermission(permissions.PRODUCT_READ), async (req, res) =>
   ]);
 
   return res.json(createPageResult({ items: products, page, size, total }));
+});
+
+router.get("/scan/:code", requirePermission(permissions.PRODUCT_READ), async (req, res) => {
+  const rawCode = String(req.params.code || "").trim();
+  if (!rawCode) {
+    return res.status(400).json({ message: "Scan code is required." });
+  }
+
+  const product = await prisma.product.findFirst({
+    where: {
+      active: true,
+      OR: [{ barcode: rawCode }, { sku: rawCode }]
+    }
+  });
+
+  if (!product) {
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("scanner_miss_total", { mode: "barcode_or_sku" });
+    }
+    return res.status(404).json({ message: "No product matched the scanned code." });
+  }
+
+  if (config.observabilityMetricsEnabled) {
+    incrementMetric("scanner_hit_total", { mode: "barcode_or_sku" });
+  }
+
+  return res.json({ product });
 });
 
 router.post("/", requirePermission(permissions.PRODUCT_WRITE), async (req, res) => {

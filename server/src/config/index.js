@@ -32,8 +32,16 @@ function numberFromEnv(schema) {
   }, schema);
 }
 
+function normalizeCsv(value) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "lab", "production"]).default("development"),
+  APP_ENV_LABEL: z.string().trim().min(1).default("local"),
   LAB_MODE: booleanFromEnv.default(false),
   LAB_PROFILE: z
     .enum(["secure", "scenario_credential_stuffing", "scenario_data_exposure"])
@@ -62,8 +70,15 @@ const envSchema = z.object({
   SIEM_HTTP_URL: z.string().trim().url().optional(),
   SIEM_HTTP_API_KEY: z.string().trim().optional(),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
+  OBSERVABILITY_ENABLED: booleanFromEnv.default(true),
+  OBSERVABILITY_AUDIT_ENABLED: booleanFromEnv.default(true),
+  OBSERVABILITY_METRICS_ENABLED: booleanFromEnv.default(true),
+  KIOSK_MODE: booleanFromEnv.default(true),
   DATABASE_PROVIDER: z.enum(["sqlite", "postgresql"]).default("sqlite"),
   DATABASE_URL: z.string().trim().min(1).default("file:./dev.db"),
+  BACKUP_DIR: z.string().trim().min(1).default("./backups"),
+  BACKUP_ENV_LABEL: z.string().trim().optional(),
+  RESTORE_REQUIRE_CONFIRM: booleanFromEnv.default(true),
   TAX_RATE: numberFromEnv(z.number().min(0).max(1)).default(0.0825),
   VOID_WINDOW_MINUTES: numberFromEnv(z.number().int().positive()).default(30),
   SEED_LAB_USERS: booleanFromEnv.default(false),
@@ -162,9 +177,7 @@ if (parsed.LAB_SEED_RANDOM_PASSWORDS && !parsed.LAB_ALLOW_DEFAULT_CREDENTIALS) {
   );
 }
 
-const corsOrigins = parsed.CORS_ORIGINS.split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const corsOrigins = Array.from(new Set(normalizeCsv(parsed.CORS_ORIGINS)));
 
 if (corsOrigins.includes("*")) {
   throw new Error("CORS_ORIGINS cannot contain '*' when credentialed cookies are enabled.");
@@ -181,6 +194,15 @@ if (exposePaymentTokens) {
 if (parsed.ALLOW_WEAK_PAYMENT_TOKENS) {
   warnings.push("ALLOW_WEAK_PAYMENT_TOKENS is enabled. Weak payment token mode may be used in this environment.");
 }
+if (!parsed.OBSERVABILITY_ENABLED) {
+  warnings.push("OBSERVABILITY_ENABLED is false. Structured logging/audit/metrics are reduced.");
+}
+if (!parsed.OBSERVABILITY_AUDIT_ENABLED) {
+  warnings.push("OBSERVABILITY_AUDIT_ENABLED is false. AuditLog persistence is disabled.");
+}
+if (!parsed.OBSERVABILITY_METRICS_ENABLED) {
+  warnings.push("OBSERVABILITY_METRICS_ENABLED is false. Runtime metrics counters are disabled.");
+}
 
 if (parsed.SIEM_MODE === "syslog" && !parsed.SYSLOG_HOST) {
   warnings.push("SIEM_MODE=syslog but SYSLOG_HOST is not configured. SIEM forwarding will be skipped.");
@@ -191,6 +213,7 @@ if (parsed.SIEM_MODE === "http" && !parsed.SIEM_HTTP_URL) {
 
 export const config = {
   nodeEnv: parsed.NODE_ENV,
+  appEnvLabel: parsed.APP_ENV_LABEL,
   labMode: parsed.LAB_MODE,
   labProfile: effectiveProfile,
   labAllowDefaultCredentials: parsed.LAB_ALLOW_DEFAULT_CREDENTIALS,
@@ -218,8 +241,15 @@ export const config = {
   siemHttpUrl: parsed.SIEM_HTTP_URL,
   siemHttpApiKey: parsed.SIEM_HTTP_API_KEY,
   logLevel: parsed.LOG_LEVEL,
+  observabilityEnabled: parsed.OBSERVABILITY_ENABLED,
+  observabilityAuditEnabled: parsed.OBSERVABILITY_AUDIT_ENABLED,
+  observabilityMetricsEnabled: parsed.OBSERVABILITY_METRICS_ENABLED,
+  kioskMode: parsed.KIOSK_MODE,
   databaseUrl: parsed.DATABASE_URL,
   databaseProvider: parsed.DATABASE_PROVIDER,
+  backupDir: parsed.BACKUP_DIR,
+  backupEnvLabel: parsed.BACKUP_ENV_LABEL || parsed.APP_ENV_LABEL,
+  restoreRequireConfirm: parsed.RESTORE_REQUIRE_CONFIRM,
   taxRate: parsed.TAX_RATE,
   voidWindowMinutes: parsed.VOID_WINDOW_MINUTES,
   seedLabUsers: parsed.SEED_LAB_USERS,

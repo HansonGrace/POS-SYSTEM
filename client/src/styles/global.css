@@ -297,6 +297,20 @@ select {
   margin-top: 10px;
 }
 
+.register-session-box {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: var(--surface);
+}
+
+.register-session-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
 .search-hint {
   margin: 0 0 10px;
   font-size: 0.85rem;
@@ -460,6 +474,29 @@ select {
 .checkout-block {
   border-top: 1px solid var(--border);
   padding-top: 10px;
+}
+
+.suspended-sales-box {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 12px;
+}
+
+.suspended-sales-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.suspended-sale-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
 }
 
 .checkout-trigger {

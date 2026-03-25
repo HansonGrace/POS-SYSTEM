@@ -1,9 +1,12 @@
 import { hasPermission } from "../auth/permissions.js";
+import { setRequestContextValue } from "../observability/context.js";
 
 function getSessionUser(req) {
   const user = req.session?.authUser;
   if (user) {
     req.user = user;
+    setRequestContextValue("actorId", user.id);
+    setRequestContextValue("actorRole", user.role);
   }
   return user;
 }

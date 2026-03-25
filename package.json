@@ -13,7 +13,10 @@
     "build": "npm run build --workspace server && npm run build --workspace client",
     "start": "npm run start --workspace server",
     "db:seed": "npm run db:seed --workspace server",
-    "db:reset": "npm run db:reset --workspace server"
+    "db:reset": "npm run db:reset --workspace server",
+    "backup:create": "npm run backup:create --workspace server",
+    "backup:restore": "npm run backup:restore --workspace server",
+    "backup:validate": "npm run backup:validate --workspace server"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

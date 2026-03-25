@@ -8,16 +8,9 @@ import fs from "node:fs";
 import { config } from "./config.js";
 import { assignRequestContext, requestLogger } from "./middleware/requestContext.js";
 import { csrfProtection } from "./security/csrf.js";
-import { logger } from "./logging/logger.js";
+import { logStructuredError, logger } from "./logging/logger.js";
 import { prisma } from "./db.js";
-import authRoutes from "./routes/authRoutes.js";
-import productRoutes from "./routes/productRoutes.js";
-import orderRoutes from "./routes/orderRoutes.js";
-import transactionRoutes from "./routes/transactionRoutes.js";
-import userRoutes from "./routes/userRoutes.js";
-import customerRoutes from "./routes/customerRoutes.js";
-import adminRoutes from "./routes/adminRoutes.js";
-import configRoutes from "./routes/configRoutes.js";
+import { mountApi } from "./presentation/http/api.js";
 
 const SQLiteStore = connectSqlite3(session);
 
@@ -100,39 +93,15 @@ export function createApp() {
 
   app.use(csrfProtection);
 
-  app.get("/api/health", async (_req, res) => {
-    let dbConnected = false;
-    try {
-      await prisma.$queryRaw`SELECT 1`;
-      dbConnected = true;
-    } catch (error) {
-      logger.warn({ err: error, type: "health_db_check_failed" });
-    }
-
-    return res.json({
-      status: dbConnected ? "ok" : "degraded",
-      time: new Date().toISOString(),
-      version: config.appVersion,
-      dbConnected
-    });
-  });
-
-  app.use("/api/auth", authRoutes);
-  app.use("/api/products", productRoutes);
-  app.use("/api/orders", orderRoutes);
-  app.use("/api/transactions", transactionRoutes);
-  app.use("/api/users", userRoutes);
-  app.use("/api/customers", customerRoutes);
-  app.use("/api/admin", adminRoutes);
-  app.use("/api/config", configRoutes);
+  mountApi(app, { db: prisma, logger, config });
 
   app.use((req, res) => {
     res.status(404).json({ message: `Route not found: ${req.method} ${req.path}` });
   });
 
-  app.use((error, _req, res, _next) => {
-    logger.error({ err: error, type: "unhandled_error" });
-    res.status(500).json({ message: "Internal server error." });
+  app.use((error, req, res, _next) => {
+    logStructuredError(error, { path: req.path, method: req.method, requestId: req.requestId });
+    res.status(500).json({ message: "Internal server error.", requestId: req.requestId || null });
   });
 
   return app;

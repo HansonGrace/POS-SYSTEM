@@ -1,114 +1,34 @@
 import { randomUUID } from "node:crypto";
 import {
-  DiscountTarget,
-  DiscountType,
   PaymentStatus,
-  RegisterSessionStatus,
   ReceiptStatus,
   RefundStatus,
   ReturnStatus,
   TransactionPaymentStatus,
-  TransactionStatus,
-  TransactionTaxType
+  TransactionStatus
 } from "@prisma/client";
-import { config } from "../config.js";
-import { computeTax } from "../utils/money.js";
-
-const TAX_BASIS_POINTS = Math.max(0, Math.round(config.taxRate * 10000));
-
-class TransactionError extends Error {
-  constructor(code, message, statusCode = 400) {
-    super(message);
-    this.name = "TransactionError";
-    this.code = code;
-    this.statusCode = statusCode;
-  }
-}
-
-function buildTransactionTotals(items) {
-  const subtotalCents = items.reduce((sum, item) => sum + item.lineSubtotalCents, 0);
-  const discountTotalCents = items.reduce((sum, item) => sum + item.discountAmountCents, 0);
-  const taxTotalCents = items.reduce((sum, item) => sum + item.taxAmountCents, 0);
-
-  return {
-    subtotalCents,
-    discountTotalCents,
-    taxTotalCents,
-    totalCents: subtotalCents + taxTotalCents
-  };
-}
-
-function assertPositiveInteger(value, name) {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new TransactionError("INVALID_INPUT", `${name} must be a positive integer`, 400);
-  }
-}
-
-async function getOpenSessionOrCreate(tx, { actorId, registerId, registerSessionId }) {
-  if (registerSessionId !== undefined) {
-    const session = await tx.registerSession.findUnique({
-      where: { id: registerSessionId },
-      select: {
-        id: true,
-        registerId: true,
-        cashierId: true,
-        status: true
-      }
-    });
-
-    if (!session) {
-      throw new TransactionError("NOT_FOUND", "register session not found", 404);
-    }
-
-    if (session.cashierId !== actorId) {
-      throw new TransactionError("FORBIDDEN", "register session is not owned by the current user", 403);
-    }
-
-    if (session.status !== RegisterSessionStatus.OPEN) {
-      throw new TransactionError("INVALID_STATE", "register session is not open", 409);
-    }
-
-    return session;
-  }
-
-  const register = registerId
-    ? await tx.register.findUnique({
-        where: { id: registerId },
-        select: { id: true, identifier: true, active: true }
-      })
-    : await tx.register.findFirst({
-        where: { active: true },
-        select: { id: true, identifier: true, active: true },
-        orderBy: { id: "asc" }
-      });
-
-  if (!register || !register.active) {
-    throw new TransactionError("NOT_FOUND", "active register not found", 404);
-  }
-
-  const existingSession = await tx.registerSession.findFirst({
-    where: {
-      registerId: register.id,
-      cashierId: actorId,
-      status: RegisterSessionStatus.OPEN
-    },
-    orderBy: { openedAt: "desc" },
-    select: { id: true }
-  });
-
-  if (existingSession) {
-    return existingSession;
-  }
-
-  return tx.registerSession.create({
-    data: {
-      registerId: register.id,
-      cashierId: actorId,
-      status: RegisterSessionStatus.OPEN
-    },
-    select: { id: true }
-  });
-}
+import { assertNonNegativeInteger, assertPositiveInteger } from "./core/validationService.js";
+import { getOpenRegisterSession } from "./core/registerSessionService.js";
+import {
+  buildLineItemTotals,
+  buildItemSnapshot,
+  resolveProductsForItems
+} from "./core/pricingService.js";
+import {
+  buildReceiptPayload
+} from "./core/receiptService.js";
+import { calculateTransactionTotalsFromItems } from "./core/transactionTotalsService.js";
+import { calculateSalesTaxCents, buildSalesTaxRecordInput } from "./core/taxService.js";
+import { buildLineDiscountInput } from "./core/discountService.js";
+import { resolveActiveUser } from "./core/userContextService.js";
+import { resolveTransactionPaymentStatus } from "./core/paymentService.js";
+import {
+  calculateRemainingTransactionRefund,
+  calculateRemainingLineRefund,
+  assertRefundWithinLimit
+} from "./core/refundService.js";
+import { TransactionError } from "./core/errors.js";
+import { submitTransactionPayment } from "./payment/paymentOrchestrator.js";
 
 async function syncTransactionTotals(tx, transactionId) {
   const items = await tx.transactionItem.findMany({
@@ -122,19 +42,16 @@ async function syncTransactionTotals(tx, transactionId) {
     }
   });
 
-  const totals = buildTransactionTotals(items);
+  const totals = calculateTransactionTotalsFromItems(items);
 
   await tx.transactionTax.deleteMany({ where: { transactionId } });
   if (items.length > 0) {
     await tx.transactionTax.create({
-      data: {
+      data: buildSalesTaxRecordInput({
         transactionId,
-        name: "Sales Tax",
-        taxType: TransactionTaxType.SALES,
-        rateBasisPoints: TAX_BASIS_POINTS,
         taxableAmountCents: totals.subtotalCents,
         amountCents: totals.taxTotalCents
-      }
+      })
     });
   }
 
@@ -225,9 +142,10 @@ export async function getTransactionById(prisma, id) {
 
 export async function createTransaction(prisma, actorId, payload) {
   const { customerId, registerId, registerSessionId, notes } = payload;
+  await resolveActiveUser(prisma, actorId);
 
   return prisma.$transaction(async (tx) => {
-    const session = await getOpenSessionOrCreate(tx, {
+    const session = await getOpenRegisterSession(tx, {
       actorId,
       registerId,
       registerSessionId
@@ -262,6 +180,8 @@ export async function addTransactionItems(prisma, actorId, transactionId, payloa
     throw new TransactionError("INVALID_INPUT", "line items are required", 400);
   }
 
+  await resolveActiveUser(prisma, actorId);
+
   return prisma.$transaction(async (tx) => {
     const transaction = await tx.transaction.findUnique({
       where: { id: transactionId },
@@ -285,22 +205,7 @@ export async function addTransactionItems(prisma, actorId, transactionId, payloa
     }
 
     const productIds = [...new Set(items.map((item) => item.productId))];
-    const products = await tx.product.findMany({
-      where: {
-        id: { in: productIds },
-        active: true
-      },
-      select: {
-        id: true,
-        name: true,
-        sku: true,
-        barcode: true,
-        category: true,
-        priceCents: true,
-        inventoryCount: true
-      }
-    });
-
+    const products = await resolveProductsForItems(tx, productIds);
     if (products.length !== productIds.length) {
       throw new TransactionError("NOT_FOUND", "one or more products are unavailable", 400);
     }
@@ -320,51 +225,35 @@ export async function addTransactionItems(prisma, actorId, transactionId, payloa
       }
 
       const quantity = item.quantity;
-      if (!Number.isInteger(quantity) || quantity <= 0) {
-        throw new TransactionError("INVALID_INPUT", "quantity must be a positive integer", 400);
-      }
+      const unitDiscountCents = Math.max(0, item.unitDiscountCents);
+      assertPositiveInteger(quantity, "quantity");
+      assertNonNegativeInteger(unitDiscountCents, "discount");
 
-      const discount = Math.max(0, item.unitDiscountCents);
-      if (!Number.isInteger(discount) || discount < 0) {
-        throw new TransactionError("INVALID_INPUT", "discount must be a non-negative integer", 400);
-      }
-
-      const lineSubtotal = product.priceCents * quantity - discount;
-      if (lineSubtotal < 0) {
-        throw new TransactionError("INVALID_INPUT", "line discount can not exceed line value", 400);
-      }
-
-      const tax = computeTax(lineSubtotal, config.taxRate);
-      const lineTotal = lineSubtotal + tax;
+      const tax = calculateSalesTaxCents(product.priceCents * quantity - unitDiscountCents);
+      const lineTotals = buildLineItemTotals({
+        product,
+        quantity,
+        unitDiscountCents,
+        lineTaxCents: tax
+      });
 
       const createdItem = await tx.transactionItem.create({
         data: {
           transactionId,
           lineNumber: nextLineNumber,
           productId: product.id,
-          productNameSnapshot: product.name,
-          productSkuSnapshot: product.sku,
-          productBarcodeSnapshot: product.barcode,
-          productCategorySnapshot: product.category,
-          quantity,
-          unitPriceCents: product.priceCents,
-          discountAmountCents: discount,
-          taxAmountCents: tax,
-          lineSubtotalCents: lineSubtotal,
-          lineTotalCents: lineTotal
+          ...buildItemSnapshot(product),
+          ...lineTotals
         }
       });
 
-      if (discount > 0) {
+      if (lineTotals.discountAmountCents > 0) {
         await tx.transactionDiscount.create({
-          data: {
+          data: buildLineDiscountInput({
             transactionId,
             transactionItemId: createdItem.id,
-            name: "Line discount",
-            discountType: DiscountType.AMOUNT,
-            target: DiscountTarget.ITEM,
-            amountCents: discount
-          }
+            amountCents: lineTotals.discountAmountCents
+          })
         });
       }
 
@@ -391,6 +280,8 @@ export async function addTransactionItems(prisma, actorId, transactionId, payloa
 }
 
 export async function finalizeTransaction(prisma, actorId, transactionId) {
+  await resolveActiveUser(prisma, actorId);
+
   return prisma.$transaction(async (tx) => {
     const transaction = await tx.transaction.findUnique({
       where: { id: transactionId },
@@ -452,18 +343,12 @@ export async function finalizeTransaction(prisma, actorId, transactionId) {
     const paymentAggregate = await tx.transactionPayment.aggregate({
       where: {
         transactionId: transaction.id,
-        status: PaymentStatus.CAPTURED
+        status: { in: [PaymentStatus.CAPTURED, PaymentStatus.COMPLETED] }
       },
       _sum: { amountCents: true }
     });
     const capturedCents = paymentAggregate._sum.amountCents || 0;
-
-    const paymentStatus =
-      capturedCents >= totals.totalCents
-        ? TransactionPaymentStatus.PAID
-        : capturedCents > 0
-          ? TransactionPaymentStatus.PARTIALLY_PAID
-          : TransactionPaymentStatus.PENDING;
+    const paymentStatus = resolveTransactionPaymentStatus(totals.totalCents, capturedCents);
 
     await tx.transaction.update({
       where: { id: transaction.id },
@@ -483,14 +368,14 @@ export async function finalizeTransaction(prisma, actorId, transactionId) {
           transactionId: transaction.id,
           cashierId: actorId,
           receiptNumber: `R-${transaction.transactionNumber}`,
-          payload: {
+          payload: buildReceiptPayload({
             transactionNumber: transaction.transactionNumber,
             cashierId: actorId,
-            lineItems: transaction.items.length,
+            lineItemCount: transaction.items.length,
             subtotalCents: totals.subtotalCents,
             taxCents: totals.taxTotalCents,
             totalCents: totals.totalCents
-          }
+          })
         }
       });
     }
@@ -513,98 +398,12 @@ export async function finalizeTransaction(prisma, actorId, transactionId) {
 }
 
 export async function recordTransactionPayment(prisma, actorId, transactionId, payload) {
-  assertPositiveInteger(payload.amountCents, "amountCents");
-
-  return prisma.$transaction(async (tx) => {
-    const transaction = await tx.transaction.findUnique({
-      where: { id: transactionId },
-      select: {
-        id: true,
-        cashierId: true,
-        status: true,
-        totalCents: true
-      }
-    });
-
-    if (!transaction) {
-      throw new TransactionError("NOT_FOUND", "transaction not found", 404);
-    }
-
-    if (transaction.cashierId !== actorId) {
-      throw new TransactionError("FORBIDDEN", "you can only pay your own transactions", 403);
-    }
-
-    if (
-      transaction.status === TransactionStatus.VOIDED ||
-      transaction.status === TransactionStatus.FULLY_REFUNDED ||
-      transaction.status === TransactionStatus.PARTIALLY_REFUNDED
-    ) {
-      throw new TransactionError("INVALID_STATE", "payments are not allowed for voided/refunded transactions", 409);
-    }
-
-    const paymentAggregate = await tx.transactionPayment.aggregate({
-      where: {
-        transactionId: transaction.id,
-        status: PaymentStatus.CAPTURED
-      },
-      _sum: { amountCents: true }
-    });
-
-    const alreadyCaptured = paymentAggregate._sum.amountCents || 0;
-    const remaining = transaction.totalCents - alreadyCaptured;
-
-    if (remaining < 0) {
-      throw new TransactionError("INVALID_STATE", "payment state is inconsistent", 409);
-    }
-
-    if (payload.amountCents > remaining) {
-      throw new TransactionError("OVER_PAYMENT", "payment exceeds remaining amount", 409);
-    }
-
-    const payment = await tx.transactionPayment.create({
-      data: {
-        transactionId: transaction.id,
-        cashierId: actorId,
-        tenderType: payload.tenderType,
-        status: PaymentStatus.CAPTURED,
-        amountCents: payload.amountCents,
-        reference: payload.reference || null,
-        notes: payload.notes || null
-      }
-    });
-
-    const capturedAfter = alreadyCaptured + payload.amountCents;
-    const paymentStatus =
-      capturedAfter >= transaction.totalCents
-        ? TransactionPaymentStatus.PAID
-        : capturedAfter > 0
-          ? TransactionPaymentStatus.PARTIALLY_PAID
-          : TransactionPaymentStatus.PENDING;
-
-    const updatedTransaction = await tx.transaction.update({
-      where: { id: transaction.id },
-      data: { paymentStatus },
-      select: {
-        id: true,
-        status: true,
-        paymentStatus: true,
-        subtotalCents: true,
-        discountTotalCents: true,
-        taxTotalCents: true,
-        totalCents: true,
-        updatedAt: true
-      }
-    });
-
-    return {
-      payment,
-      transaction: updatedTransaction
-    };
-  });
+  return submitTransactionPayment(prisma, actorId, transactionId, payload);
 }
 
 export async function refundTransaction(prisma, actorId, transactionId, payload) {
   const { transactionItemId, amountCents, reason } = payload;
+  await resolveActiveUser(prisma, actorId);
 
   return prisma.$transaction(async (tx) => {
     const transaction = await tx.transaction.findUnique({
@@ -643,7 +442,7 @@ export async function refundTransaction(prisma, actorId, transactionId, payload)
     });
 
     const alreadyRefunded = refundedAggregate._sum.amountCents || 0;
-    const refundableTransaction = Math.max(0, transaction.totalCents - alreadyRefunded);
+    const refundableTransaction = calculateRemainingTransactionRefund(transaction.totalCents, alreadyRefunded);
 
     const payloadReason = reason && reason.trim() ? reason.trim() : "Refund requested";
     const lineItem =
@@ -666,17 +465,14 @@ export async function refundTransaction(prisma, actorId, transactionId, payload)
       });
 
       const refundedForItem = existingItemRefunds._sum.amountCents || 0;
-      const refundableForItem = Math.max(0, lineItem.lineTotalCents - refundedForItem);
+      const refundableForItem = calculateRemainingLineRefund(lineItem.lineTotalCents, refundedForItem);
       if (refundableForItem <= 0) {
         throw new TransactionError("INVALID_STATE", "transaction item is already fully refunded", 409);
       }
 
       const requested = amountCents === undefined ? refundableForItem : amountCents;
       assertPositiveInteger(requested, "amountCents");
-
-      if (requested > refundableForItem) {
-        throw new TransactionError("OVER_REFUND", "refund exceeds refundable amount for line item", 409);
-      }
+      assertRefundWithinLimit(requested, refundableForItem);
 
       const returnRecord = await tx.return.create({
         data: {
@@ -762,10 +558,9 @@ export async function refundTransaction(prisma, actorId, transactionId, payload)
     if (amountCents !== undefined) {
       assertPositiveInteger(amountCents, "amountCents");
     }
+
     const requested = amountCents === undefined ? refundableTransaction : amountCents;
-    if (requested > refundableTransaction) {
-      throw new TransactionError("OVER_REFUND", "refund exceeds refundable amount", 409);
-    }
+    assertRefundWithinLimit(requested, refundableTransaction);
 
     const partialRefundItem = await tx.refund.findFirst({
       where: {
@@ -856,6 +651,7 @@ export async function refundTransaction(prisma, actorId, transactionId, payload)
 
 export async function voidTransaction(prisma, actorId, transactionId, payload) {
   const reason = payload.reason?.trim() || "Voided by cashier";
+  await resolveActiveUser(prisma, actorId);
 
   return prisma.$transaction(async (tx) => {
     const transaction = await tx.transaction.findUnique({
@@ -953,4 +749,3 @@ export async function voidTransaction(prisma, actorId, transactionId, payload) {
 }
 
 export { TransactionError };
-

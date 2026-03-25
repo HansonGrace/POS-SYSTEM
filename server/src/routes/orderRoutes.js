@@ -8,10 +8,14 @@ import { permissions } from "../auth/permissions.js";
 import { computeTax } from "../utils/money.js";
 import { parsePageQuery, createPageResult } from "../utils/pagination.js";
 import { emitSecurityEvent } from "../security/events.js";
+import { incrementMetric } from "../observability/metrics.js";
 import {
   assertWeakPaymentTokenModeEnabled,
   generatePaymentToken
 } from "../security/paymentTokens.js";
+import { createPrintJob, listPrintJobs } from "../services/core/printerSimulatorService.js";
+import { requireOpenRegisterSession } from "../services/core/registerWorkflowService.js";
+import { TransactionError } from "../services/core/errors.js";
 
 const router = Router();
 
@@ -26,6 +30,8 @@ class InsufficientStockError extends Error {
 const createOrderSchema = z.object({
   customerId: z.number().int().positive().nullable().optional(),
   paymentType: z.nativeEnum(PaymentType),
+  registerSessionId: z.number().int().positive().optional(),
+  suspendedSaleId: z.number().int().positive().optional(),
   items: z
     .array(
       z.object({
@@ -44,6 +50,20 @@ const createOrderSchema = z.object({
       token: z.string().trim().min(8).optional()
     })
     .optional()
+});
+
+const suspendSaleSchema = z.object({
+  registerSessionId: z.number().int().positive().optional(),
+  customerId: z.number().int().positive().nullable().optional(),
+  note: z.string().trim().max(320).optional(),
+  items: z
+    .array(
+      z.object({
+        productId: z.number().int().positive(),
+        quantity: z.number().int().positive()
+      })
+    )
+    .min(1)
 });
 
 function buildOrderWhere(query) {
@@ -77,14 +97,8 @@ function buildOrderWhere(query) {
   return where;
 }
 
-router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) => {
-  const parsed = createOrderSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid order payload." });
-  }
-
-  const { items, paymentType, customerId, saveCardOnFile, card } = parsed.data;
-  const uniqueProductIds = [...new Set(items.map((item) => item.productId))];
+async function resolvePricedItems(inputItems) {
+  const uniqueProductIds = [...new Set(inputItems.map((item) => item.productId))];
 
   const products = await prisma.product.findMany({
     where: { id: { in: uniqueProductIds }, active: true },
@@ -92,17 +106,17 @@ router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) =
   });
 
   if (products.length !== uniqueProductIds.length) {
-    return res.status(400).json({ message: "One or more products are unavailable." });
+    throw new TransactionError("INVALID_INPUT", "One or more products are unavailable.", 400);
   }
 
   const byId = new Map(products.map((product) => [product.id, product]));
   const normalizedItems = [];
   let subtotalCents = 0;
 
-  for (const item of items) {
+  for (const item of inputItems) {
     const product = byId.get(item.productId);
     if (!product) {
-      return res.status(400).json({ message: "Invalid product in cart." });
+      throw new TransactionError("INVALID_INPUT", "Invalid product in cart.", 400);
     }
 
     const lineTotalCents = product.priceCents * item.quantity;
@@ -115,12 +129,37 @@ router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) =
     });
   }
 
-  const taxCents = computeTax(subtotalCents, config.taxRate);
-  const totalCents = subtotalCents + taxCents;
+  return {
+    productsById: byId,
+    normalizedItems,
+    subtotalCents,
+    taxCents: computeTax(subtotalCents, config.taxRate),
+    totalCents: subtotalCents + computeTax(subtotalCents, config.taxRate)
+  };
+}
+
+router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) => {
+  const parsed = createOrderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid order payload." });
+  }
+
+  const {
+    items,
+    paymentType,
+    customerId,
+    saveCardOnFile,
+    card,
+    registerSessionId,
+    suspendedSaleId
+  } = parsed.data;
 
   try {
+    const session = await requireOpenRegisterSession(prisma, req.user.id, registerSessionId || null);
+    const pricing = await resolvePricedItems(items);
+
     const createdOrder = await prisma.$transaction(async (tx) => {
-      for (const item of normalizedItems) {
+      for (const item of pricing.normalizedItems) {
         const updated = await tx.product.updateMany({
           where: {
             id: item.productId,
@@ -131,7 +170,7 @@ router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) =
         });
 
         if (updated.count !== 1) {
-          const conflictedProduct = byId.get(item.productId);
+          const conflictedProduct = pricing.productsById.get(item.productId);
           throw new InsufficientStockError(
             `Insufficient inventory for ${conflictedProduct?.name || "product"}.`,
             conflictedProduct
@@ -141,7 +180,11 @@ router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) =
 
       if (paymentType === PaymentType.CARD && saveCardOnFile) {
         if (!customerId || !card) {
-          throw new Error("Customer and card fields are required when saving card on file.");
+          throw new TransactionError(
+            "INVALID_INPUT",
+            "Customer and card fields are required when saving card on file.",
+            400
+          );
         }
 
         assertWeakPaymentTokenModeEnabled();
@@ -159,18 +202,18 @@ router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) =
         });
       }
 
-      return tx.order.create({
+      const order = await tx.order.create({
         data: {
           cashierId: req.user.id,
           customerId: customerId || null,
-          subtotalCents,
-          taxCents,
-          totalCents,
+          subtotalCents: pricing.subtotalCents,
+          taxCents: pricing.taxCents,
+          totalCents: pricing.totalCents,
           status: OrderStatus.COMPLETED,
           paymentType,
           items: {
             createMany: {
-              data: normalizedItems
+              data: pricing.normalizedItems
             }
           }
         },
@@ -205,11 +248,35 @@ router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) =
           }
         }
       });
+
+      if (suspendedSaleId) {
+        await tx.suspendedSale.updateMany({
+          where: {
+            id: suspendedSaleId,
+            cashierId: req.user.id,
+            status: "RESUMED"
+          },
+          data: {
+            status: "CHECKED_OUT",
+            checkoutOrderId: order.id
+          }
+        });
+      }
+
+      return order;
     });
 
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("transactions_finalized_total", { path: "orders", paymentType });
+    }
     await emitSecurityEvent(
       "order_created",
-      { orderId: createdOrder.id, paymentType, totalCents: createdOrder.totalCents },
+      {
+        orderId: createdOrder.id,
+        paymentType,
+        totalCents: createdOrder.totalCents,
+        registerSessionId: session.id
+      },
       req
     );
 
@@ -221,8 +288,15 @@ router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) =
       );
     }
 
-    return res.status(201).json({ order: createdOrder });
+    return res.status(201).json({ order: createdOrder, registerSessionId: session.id });
   } catch (error) {
+    if (error instanceof TransactionError) {
+      if (config.observabilityMetricsEnabled) {
+        incrementMetric("payment_failures_total", { reason: error.code || "transaction_error" });
+      }
+      return res.status(error.statusCode).json({ message: error.message, code: error.code });
+    }
+
     if (error instanceof InsufficientStockError) {
       await emitSecurityEvent(
         "suspicious_inventory_negative_attempt",
@@ -232,15 +306,140 @@ router.post("/", requirePermission(permissions.ORDER_CREATE), async (req, res) =
       return res.status(409).json({ message: error.message });
     }
 
-    if (error.message?.includes("Customer and card fields are required")) {
-      return res.status(400).json({ message: error.message });
-    }
-
     if (error.code === "P2002") {
       return res.status(409).json({ message: "Duplicate payment token." });
     }
 
     return res.status(500).json({ message: "Failed to create order." });
+  }
+});
+
+router.post("/suspended", requirePermission(permissions.SUSPENDED_SALE_MANAGE), async (req, res) => {
+  const parsed = suspendSaleSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid suspended sale payload." });
+  }
+
+  try {
+    const session = await requireOpenRegisterSession(
+      prisma,
+      req.user.id,
+      parsed.data.registerSessionId || null
+    );
+    const pricing = await resolvePricedItems(parsed.data.items);
+
+    const suspendedSale = await prisma.suspendedSale.create({
+      data: {
+        cashierId: req.user.id,
+        registerSessionId: session.id,
+        customerId: parsed.data.customerId || null,
+        status: "ACTIVE",
+        note: parsed.data.note || null,
+        payload: {
+          items: parsed.data.items
+        },
+        subtotalCents: pricing.subtotalCents,
+        taxCents: pricing.taxCents,
+        totalCents: pricing.totalCents
+      }
+    });
+
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("suspended_sales_total", { status: "ACTIVE" });
+    }
+    await emitSecurityEvent(
+      "sale_suspended",
+      { suspendedSaleId: suspendedSale.id, registerSessionId: session.id, totalCents: suspendedSale.totalCents },
+      req
+    );
+
+    return res.status(201).json({ suspendedSale });
+  } catch (error) {
+    if (error instanceof TransactionError) {
+      return res.status(error.statusCode).json({ message: error.message, code: error.code });
+    }
+    return res.status(500).json({ message: "Failed to suspend sale." });
+  }
+});
+
+router.get("/suspended", requirePermission(permissions.SUSPENDED_SALE_MANAGE), async (req, res) => {
+  try {
+    const session = await requireOpenRegisterSession(prisma, req.user.id);
+    const items = await prisma.suspendedSale.findMany({
+      where: {
+        cashierId: req.user.id,
+        registerSessionId: session.id,
+        status: { in: ["ACTIVE", "RESUMED"] }
+      },
+      orderBy: { suspendedAt: "desc" }
+    });
+    return res.json({ items });
+  } catch (error) {
+    if (error instanceof TransactionError) {
+      if (error.code === "INVALID_STATE") {
+        return res.json({ items: [] });
+      }
+      return res.status(error.statusCode).json({ message: error.message, code: error.code });
+    }
+    return res.status(500).json({ message: "Failed to load suspended sales." });
+  }
+});
+
+router.post("/suspended/:id/resume", requirePermission(permissions.SUSPENDED_SALE_MANAGE), async (req, res) => {
+  const suspendedSaleId = Number(req.params.id);
+  if (!Number.isInteger(suspendedSaleId) || suspendedSaleId <= 0) {
+    return res.status(400).json({ message: "Invalid suspended sale id." });
+  }
+
+  try {
+    await requireOpenRegisterSession(prisma, req.user.id);
+
+    const sale = await prisma.suspendedSale.findFirst({
+      where: { id: suspendedSaleId, cashierId: req.user.id }
+    });
+    if (!sale) {
+      return res.status(404).json({ message: "Suspended sale not found." });
+    }
+    if (!["ACTIVE", "RESUMED"].includes(sale.status)) {
+      return res.status(409).json({ message: "Suspended sale cannot be resumed." });
+    }
+
+    const updated = await prisma.suspendedSale.update({
+      where: { id: sale.id },
+      data: { status: "RESUMED", resumedAt: new Date() }
+    });
+    const payloadItems = Array.isArray(updated.payload?.items) ? updated.payload.items : [];
+    const productIds = [...new Set(payloadItems.map((item) => item.productId).filter((value) => Number.isInteger(value)))];
+    const products = productIds.length
+      ? await prisma.product.findMany({
+          where: { id: { in: productIds }, active: true }
+        })
+      : [];
+    const byProductId = new Map(products.map((product) => [product.id, product]));
+    const resumeCart = payloadItems
+      .map((item) => {
+        const product = byProductId.get(item.productId);
+        if (!product) {
+          return null;
+        }
+        return {
+          product,
+          quantity: item.quantity
+        };
+      })
+      .filter(Boolean);
+
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("suspended_sales_total", { status: "RESUMED" });
+    }
+    await emitSecurityEvent("sale_resumed", { suspendedSaleId: updated.id }, req);
+
+    return res.json({ suspendedSale: updated, resumeCart });
+  } catch (error) {
+    if (error instanceof TransactionError) {
+      return res.status(error.statusCode).json({ message: error.message, code: error.code });
+    }
+    return res.status(500).json({ message: "Failed to resume suspended sale." });
   }
 });
 
@@ -387,8 +586,53 @@ router.post(
     });
 
     await emitSecurityEvent("order_voided", { orderId: id, previousStatus: order.status }, req);
+    if (config.observabilityMetricsEnabled) {
+      incrementMetric("refunds_issued_total", { type: "void_order" });
+    }
     return res.json({ order: updatedOrder });
   }
 );
+
+router.post("/:id/print", requireAnyPermission(permissions.ORDER_READ_OWN, permissions.ORDER_READ_ALL), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ message: "Invalid order id." });
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    include: {
+      cashier: { select: { id: true, username: true, role: true } },
+      customer: { select: { id: true, name: true } },
+      items: {
+        include: {
+          product: {
+            select: { id: true, name: true, sku: true, barcode: true }
+          }
+        }
+      }
+    }
+  });
+
+  if (!order) {
+    return res.status(404).json({ message: "Order not found." });
+  }
+
+  if (req.user.role === Role.CASHIER && order.cashierId !== req.user.id) {
+    return res.status(403).json({ message: "You can only print your own orders." });
+  }
+
+  const printJob = createPrintJob(order, req.user.id, req.requestId);
+  if (config.observabilityMetricsEnabled) {
+    incrementMetric("receipt_print_total", { status: order.status });
+  }
+  await emitSecurityEvent("receipt_printed", { orderId: order.id, printJobId: printJob.id }, req);
+
+  return res.status(201).json({ printJob });
+});
+
+router.get("/print/jobs", requirePermission(permissions.ORDER_READ_ALL), async (_req, res) => {
+  return res.json({ items: listPrintJobs() });
+});
 
 export default router;

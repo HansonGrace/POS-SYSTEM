@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, formatCents } from "../api";
-import type { Order } from "../types";
+import type { Order, PrintJob } from "../types";
 
 export default function ReceiptPage() {
   const { id } = useParams();
@@ -9,6 +9,7 @@ export default function ReceiptPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [printJob, setPrintJob] = useState<PrintJob | null>(null);
 
   const loadOrder = async () => {
     if (!id) {
@@ -44,6 +45,23 @@ export default function ReceiptPage() {
       setOrder(response.order);
     } catch (voidError) {
       setError(voidError instanceof Error ? voidError.message : "Failed to void order.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const simulatePrinter = async () => {
+    if (!order) {
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    try {
+      const response = await api.post<{ printJob: PrintJob }>(`/api/orders/${order.id}/print`, {});
+      setPrintJob(response.printJob);
+    } catch (printError) {
+      setError(printError instanceof Error ? printError.message : "Failed to simulate receipt printer.");
     } finally {
       setBusy(false);
     }
@@ -123,6 +141,9 @@ export default function ReceiptPage() {
         <button type="button" onClick={() => window.print()}>
           Print Receipt
         </button>
+        <button type="button" onClick={simulatePrinter} disabled={busy}>
+          {busy ? "Printing..." : "Simulate Printer"}
+        </button>
 
         <Link to="/pos">
           <button type="button">Back to POS</button>
@@ -134,6 +155,12 @@ export default function ReceiptPage() {
           </button>
         ) : null}
       </div>
+
+      {printJob ? (
+        <pre className="panel" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
+          {printJob.output}
+        </pre>
+      ) : null}
     </section>
   );
 }

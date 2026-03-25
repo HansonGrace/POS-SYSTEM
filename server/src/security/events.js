@@ -2,58 +2,9 @@ import dgram from "node:dgram";
 import { prisma } from "../db.js";
 import { config } from "../config.js";
 import { logger } from "../logging/logger.js";
-
-const severityByEventType = {
-  auth_login_success: "info",
-  auth_login_failed: "warning",
-  auth_account_locked: "warning",
-  auth_logout: "info",
-  lockout_disabled: "warning",
-  data_customers_list_access: "info",
-  data_customer_detail_access: "info",
-  data_customer_search: "info",
-  data_customer_token_access: "warning",
-  product_created: "info",
-  product_updated: "info",
-  product_deactivated: "warning",
-  customer_created: "info",
-  customer_updated: "info",
-  order_created: "info",
-  order_voided: "warning",
-  payment_method_added: "info",
-  admin_user_created: "info",
-  admin_user_updated: "info",
-  admin_user_deleted: "warning",
-  suspicious_rate_limit_hit: "warning",
-  suspicious_csrf_failure: "warning",
-  suspicious_inventory_negative_attempt: "warning"
-};
-
-const categoryByEventType = {
-  auth_login_success: "auth",
-  auth_login_failed: "auth",
-  auth_account_locked: "auth",
-  auth_logout: "auth",
-  lockout_disabled: "auth",
-  data_customers_list_access: "data",
-  data_customer_detail_access: "data",
-  data_customer_search: "data",
-  data_customer_token_access: "data",
-  product_created: "inventory",
-  product_updated: "inventory",
-  product_deactivated: "inventory",
-  customer_created: "data",
-  customer_updated: "data",
-  order_created: "transaction",
-  order_voided: "transaction",
-  payment_method_added: "transaction",
-  admin_user_created: "admin",
-  admin_user_updated: "admin",
-  admin_user_deleted: "admin",
-  suspicious_rate_limit_hit: "threat",
-  suspicious_csrf_failure: "threat",
-  suspicious_inventory_negative_attempt: "threat"
-};
+import { classifyEvent } from "../observability/events.js";
+import { incrementMetric } from "../observability/metrics.js";
+import { redactSensitiveFields } from "./redaction.js";
 
 function sendSyslog(payload) {
   if (!config.syslogHost) {
@@ -98,7 +49,7 @@ async function sendHttpEvent(payload) {
 }
 
 async function forwardToSiem(payload) {
-  if (config.siemMode === "off") {
+  if (config.siemMode === "off" || !config.observabilityEnabled) {
     return;
   }
 
@@ -112,48 +63,64 @@ async function forwardToSiem(payload) {
       await sendHttpEvent(payload);
     }
   } catch (error) {
-    logger.warn({ err: error, type: "siem_forward_failed" });
+    logger.warn({ err: error, eventType: "siem_forward_failed" });
   }
 }
 
 export async function emitSecurityEvent(type, payload = {}, req = null) {
+  if (!config.observabilityEnabled) {
+    return;
+  }
+
   const actorId = req?.user?.id ?? req?.session?.authUser?.id ?? null;
   const requestId = req?.requestId ?? null;
+  const correlationId = req?.correlationId ?? requestId;
   const ip = req?.ip ?? null;
   const userAgent = req?.get?.("user-agent") ?? null;
-  const severity = severityByEventType[type] || "info";
-  const category = categoryByEventType[type] || "app";
+  const classification = classifyEvent(type);
+  const safePayload = redactSensitiveFields(payload);
 
   const event = {
     type,
-    severity,
-    category,
+    severity: classification.severity,
+    category: classification.category,
+    alertClass: classification.alertClass,
     actorId,
     requestId,
+    correlationId,
     ip,
     userAgent,
-    payload,
-    time: new Date().toISOString()
+    payload: safePayload,
+    timestamp: new Date().toISOString()
   };
 
-  logger.info({ type: "security_event", event });
-
-  try {
-    await prisma.auditLog.create({
-      data: {
-        actorId,
-        action: type,
-        metadata: payload,
-        requestId,
-        ip,
-        userAgent,
-        severity,
-        category
-      }
+  logger.info({ eventType: "audit_event", event });
+  if (config.observabilityMetricsEnabled) {
+    incrementMetric("audit_event_count", {
+      action: type,
+      category: classification.category,
+      severity: classification.severity
     });
-  } catch (error) {
-    logger.error({ err: error, type: "audit_log_write_failed", eventType: type });
   }
 
-  forwardToSiem(event);
+  try {
+    if (config.observabilityAuditEnabled) {
+      await prisma.auditLog.create({
+        data: {
+          actorId,
+          action: type,
+          metadata: safePayload,
+          requestId,
+          ip,
+          userAgent,
+          severity: classification.severity,
+          category: classification.category
+        }
+      });
+    }
+  } catch (error) {
+    logger.error({ err: error, eventType: "audit_log_write_failed", action: type });
+  }
+
+  void forwardToSiem(event);
 }
