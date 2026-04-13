@@ -6,6 +6,7 @@ import CashierLayout from "./layouts/CashierLayout";
 import AdminCustomersPage from "./pages/AdminCustomersPage";
 import AdminDashboardPage from "./pages/AdminDashboardPage";
 import AdminAuditLogsPage from "./pages/AdminAuditLogsPage";
+import AdminSecurityPage from "./pages/AdminSecurityPage";
 import AdminOrdersPage from "./pages/AdminOrdersPage";
 import AdminProductsPage from "./pages/AdminProductsPage";
 import AdminUsersPage from "./pages/AdminUsersPage";
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/admin/orders" element={<AdminOrdersPage />} />
           <Route path="/admin/customers" element={<AdminCustomersPage />} />
           <Route path="/admin/audit-logs" element={<AdminAuditLogsPage />} />
+          <Route path="/admin/security" element={<AdminSecurityPage />} />
         </Route>
       </Route>
 
