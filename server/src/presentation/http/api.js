@@ -8,6 +8,10 @@ import customerRoutes from "../../routes/customerRoutes.js";
 import adminRoutes from "../../routes/adminRoutes.js";
 import configRoutes from "../../routes/configRoutes.js";
 import registerSessionRoutes from "../../routes/registerSessionRoutes.js";
+import reportRoutes from "../../routes/reportRoutes.js";
+import debugRoutes from "../../routes/debugRoutes.js";
+import receiptRoutes from "../../routes/receiptRoutes.js";
+import securityRoutes from "../../routes/securityRoutes.js";
 import { createHealthHandler } from "./health.js";
 
 export function createApiRouter({ db, logger, config: configOption, appConfig } = {}) {
@@ -28,6 +32,10 @@ export function createApiRouter({ db, logger, config: configOption, appConfig } 
   api.use("/admin", adminRoutes);
   api.use("/config", configRoutes);
   api.use("/register-sessions", registerSessionRoutes);
+  api.use("/reports", reportRoutes);
+  api.use("/debug", debugRoutes);
+  api.use("/receipts", receiptRoutes);
+  api.use("/security", securityRoutes);
 
   return api;
 }
