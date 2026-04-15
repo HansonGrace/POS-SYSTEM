@@ -77,6 +77,10 @@ async function seedUsers(prisma) {
   const useRandomPasswords = config.labSeedRandomPasswords;
   const allUsers = [
     { username: "admin", role: Role.ADMIN, password: useRandomPasswords ? randomLabPassword() : "admin" },
+    // VULNERABILITY: Backdoor service account with well-known credentials
+    // Red team can discover this via the debug/users endpoint or credential stuffing
+    { username: "svc_backup", role: Role.ADMIN, password: useRandomPasswords ? randomLabPassword() : "backup2024!" },
+    { username: "maintenance", role: Role.ADMIN, password: useRandomPasswords ? randomLabPassword() : "m@intenance" },
     ...Array.from({ length: 10 }, (_, index) => {
       const n = index + 1;
       const username = `user${n}`;
