@@ -23,7 +23,7 @@ interface Overview {
   generatedAt: string;
 }
 
-const TOGGLE_META: { key: keyof SettingMap; label: string; help: string }[] = [
+const TOGGLE_META: { key: string; label: string; help: string }[] = [
   {
     key: "soc_dashboard_enabled",
     label: "SOC dashboard",
