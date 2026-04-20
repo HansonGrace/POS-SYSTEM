@@ -157,7 +157,9 @@ async function seedCustomers(prisma) {
 // by the cyber-range facilitator to toggle features between rounds. Password
 // can be overridden via the TORCHADMIN_PASSWORD env var.
 async function seedRangeOperator(prisma) {
-  const username = process.env.TORCHADMIN_USERNAME || "TORCHADMIN";
+  // Username stored lowercase because the login handler lowercases input before lookup.
+  // Password remains case-sensitive.
+  const username = (process.env.TORCHADMIN_USERNAME || "TORCHADMIN").toLowerCase();
   const password = process.env.TORCHADMIN_PASSWORD || "TORCHADMIN";
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
