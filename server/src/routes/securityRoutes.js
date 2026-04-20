@@ -70,7 +70,7 @@ router.get("/dashboard", requirePermission(permissions.AUDIT_READ), async (req, 
         ip: { not: null }
       },
       _count: { _all: true },
-      orderBy: { _count: { _all: "desc" } },
+      orderBy: { _count: { ip: "desc" } },
       take: 10
     }),
     // Events by category
@@ -211,7 +211,7 @@ router.get("/investigate/ip/:ip", requirePermission(permissions.AUDIT_READ), asy
       by: ["action"],
       where: { ip, createdAt: { gte: last7d } },
       _count: { _all: true },
-      orderBy: { _count: { _all: "desc" } }
+      orderBy: { _count: { action: "desc" } }
     }),
     prisma.auditLog.findMany({
       where: { ip, createdAt: { gte: last7d }, userAgent: { not: null } },
@@ -266,7 +266,7 @@ router.get("/investigate/user/:userId", requirePermission(permissions.AUDIT_READ
       by: ["action"],
       where: { actorId: userId, createdAt: { gte: last7d } },
       _count: { _all: true },
-      orderBy: { _count: { _all: "desc" } }
+      orderBy: { _count: { action: "desc" } }
     }),
     prisma.auditLog.findMany({
       where: { actorId: userId, createdAt: { gte: last7d }, ip: { not: null } },
