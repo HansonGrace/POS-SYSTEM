@@ -14,8 +14,12 @@ export default function ProtectedRoute({ allowedRoles }: { allowedRoles: Role[] 
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
 
-  if (!allowedRoles.includes(user.role)) {
-    const target = user.role === "ADMIN" ? "/admin" : "/pos";
+  // SUPERADMIN has access to everything a regular admin can reach.
+  const effectiveRoles: Role[] = user.role === "SUPERADMIN" ? ["SUPERADMIN", "ADMIN"] : [user.role];
+  const allowed = effectiveRoles.some((r) => allowedRoles.includes(r));
+
+  if (!allowed) {
+    const target = user.role === "ADMIN" || user.role === "SUPERADMIN" ? "/admin" : "/pos";
     return <Navigate to={target} replace />;
   }
 

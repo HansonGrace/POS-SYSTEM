@@ -1,4 +1,4 @@
-export type Role = "ADMIN" | "CASHIER";
+export type Role = "SUPERADMIN" | "ADMIN" | "CASHIER";
 
 export type PaginatedResponse<T> = {
   items: T[];

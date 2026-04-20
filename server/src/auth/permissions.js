@@ -18,10 +18,12 @@ export const permissions = {
   USER_MANAGE: "USER:MANAGE",
   AUDIT_READ: "AUDIT:READ",
   METRICS_READ: "METRICS:READ",
-  CONFIG_READ: "CONFIG:READ"
+  CONFIG_READ: "CONFIG:READ",
+  RANGE_ADMIN: "RANGE:ADMIN"
 };
 
-const baseAdminPermissions = new Set(Object.values(permissions));
+const adminPermissionSet = new Set(Object.values(permissions).filter((p) => p !== permissions.RANGE_ADMIN));
+const superAdminPermissions = new Set(Object.values(permissions));
 const cashierPermissions = new Set([
   permissions.CUSTOMER_SEARCH,
   permissions.PRODUCT_READ,
@@ -35,7 +37,8 @@ const cashierPermissions = new Set([
 ]);
 
 export const rolePermissionMap = {
-  ADMIN: baseAdminPermissions,
+  SUPERADMIN: superAdminPermissions,
+  ADMIN: adminPermissionSet,
   CASHIER: cashierPermissions
 };
 

@@ -153,6 +153,29 @@ async function seedCustomers(prisma) {
   }
 }
 
+// Seeds the range operator (TORCHADMIN) account. This is the super-admin used
+// by the cyber-range facilitator to toggle features between rounds. Password
+// can be overridden via the TORCHADMIN_PASSWORD env var.
+async function seedRangeOperator(prisma) {
+  const username = process.env.TORCHADMIN_USERNAME || "TORCHADMIN";
+  const password = process.env.TORCHADMIN_PASSWORD || "TORCHADMIN";
+  const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+
+  await prisma.user.upsert({
+    where: { username },
+    update: { passwordHash, role: Role.SUPERADMIN, active: true, failedLogins: 0, lockedUntil: null },
+    create: {
+      username,
+      passwordHash,
+      role: Role.SUPERADMIN,
+      active: true,
+      failedLogins: 0
+    }
+  });
+
+  console.log(`Range operator seeded: ${username} (SUPERADMIN). Override via TORCHADMIN_USERNAME/TORCHADMIN_PASSWORD.`);
+}
+
 async function seedRegisters(prisma) {
   for (const register of registers) {
     await prisma.register.upsert({
@@ -175,10 +198,11 @@ export async function seedDatabase() {
 
   try {
     await seedUsers(prisma);
+    await seedRangeOperator(prisma);
     await seedProducts(prisma);
     await seedCustomers(prisma);
     await seedRegisters(prisma);
-    console.log("Seed completed: products, customers, and registers. Lab users are opt-in via SEED_LAB_USERS=true.");
+    console.log("Seed completed: products, customers, registers, and range operator. Lab users are opt-in via SEED_LAB_USERS=true.");
   } finally {
     await prisma.$disconnect();
   }

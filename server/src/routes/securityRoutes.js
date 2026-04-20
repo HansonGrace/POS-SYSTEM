@@ -3,8 +3,21 @@ import { prisma } from "../db.js";
 import { requirePermission } from "../middleware/auth.js";
 import { permissions } from "../auth/permissions.js";
 import { emitSecurityEvent } from "../security/events.js";
+import { getSetting } from "./rangeControlRoutes.js";
 
 const router = Router();
+
+// Gate the whole SOC surface behind the range-control toggle.
+// SUPERADMIN bypasses the toggle so they can always see the dashboard.
+router.use(async (req, res, next) => {
+  const user = req.session?.authUser;
+  if (user?.role === "SUPERADMIN") return next();
+  const enabled = await getSetting("soc_dashboard_enabled");
+  if (enabled === "false") {
+    return res.status(404).json({ message: "SOC dashboard is disabled for this exercise." });
+  }
+  next();
+});
 
 // Real-time threat dashboard data
 router.get("/dashboard", requirePermission(permissions.AUDIT_READ), async (req, res) => {

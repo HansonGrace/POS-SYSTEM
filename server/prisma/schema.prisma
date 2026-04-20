@@ -8,6 +8,7 @@ datasource db {
 }
 
 enum Role {
+  SUPERADMIN
   ADMIN
   CASHIER
 }
@@ -582,4 +583,11 @@ model AuditLog {
   @@index([createdAt])
   @@index([severity])
   @@index([category])
+}
+
+model RangeSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+  updatedBy Int?
 }

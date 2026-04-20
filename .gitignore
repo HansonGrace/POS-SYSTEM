@@ -104,3 +104,7 @@ private/
 Thumbs.db
 .vscode/
 .idea/
+ALERT_RULE_REFERENCE.pdf
+BLUE_TEAM_SOC_PLAYBOOK.pdf
+generate-alert-reference.py
+generate-soc-playbook.py

@@ -12,6 +12,7 @@ import reportRoutes from "../../routes/reportRoutes.js";
 import debugRoutes from "../../routes/debugRoutes.js";
 import receiptRoutes from "../../routes/receiptRoutes.js";
 import securityRoutes from "../../routes/securityRoutes.js";
+import rangeControlRoutes from "../../routes/rangeControlRoutes.js";
 import { createHealthHandler } from "./health.js";
 
 export function createApiRouter({ db, logger, config: configOption, appConfig } = {}) {
@@ -36,6 +37,7 @@ export function createApiRouter({ db, logger, config: configOption, appConfig } 
   api.use("/debug", debugRoutes);
   api.use("/receipts", receiptRoutes);
   api.use("/security", securityRoutes);
+  api.use("/range", rangeControlRoutes);
 
   return api;
 }

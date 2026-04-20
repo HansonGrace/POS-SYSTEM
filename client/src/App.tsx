@@ -7,6 +7,7 @@ import AdminCustomersPage from "./pages/AdminCustomersPage";
 import AdminDashboardPage from "./pages/AdminDashboardPage";
 import AdminAuditLogsPage from "./pages/AdminAuditLogsPage";
 import AdminSecurityPage from "./pages/AdminSecurityPage";
+import RangeControlPage from "./pages/RangeControlPage";
 import AdminOrdersPage from "./pages/AdminOrdersPage";
 import AdminProductsPage from "./pages/AdminProductsPage";
 import AdminUsersPage from "./pages/AdminUsersPage";
@@ -25,6 +26,7 @@ function HomeRedirect() {
     return <Navigate to="/login" replace />;
   }
 
+  if (user.role === "SUPERADMIN") return <Navigate to="/range" replace />;
   return <Navigate to={user.role === "ADMIN" ? "/admin" : "/pos"} replace />;
 }
 
@@ -39,6 +41,10 @@ export default function App() {
           <Route path="/pos" element={<CashierPosPage />} />
           <Route path="/pos/receipt/:id" element={<ReceiptPage />} />
         </Route>
+      </Route>
+
+      <Route element={<ProtectedRoute allowedRoles={["SUPERADMIN"]} />}>
+        <Route path="/range" element={<RangeControlPage />} />
       </Route>
 
       <Route element={<ProtectedRoute allowedRoles={["ADMIN"]} />}>
